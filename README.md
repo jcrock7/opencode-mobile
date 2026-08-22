@@ -21,6 +21,11 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   `src/push/notification-handler.ts`.
 - Test suite grown to 447 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
+- **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
+  `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
+  None were imported. This drops the install from 1,243 packages to 292 and
+  fixes an `npm install` failure in `cloudflared`'s postinstall -- see
+  [Install fails on cloudflared](#install-fails-on-cloudflared).
 
 ### v1.2.x -> v1.3.10
 
@@ -150,7 +155,7 @@ local checkout instead.
 #    the build is required -- OpenCode loads the compiled output, not the source.
 git clone https://github.com/jcrock7/opencode-mobile
 cd opencode-mobile
-npm install
+npm ci          # or `npm install`
 npm run build
 
 # 2. Register it in your global OpenCode config as a file:// spec.
@@ -167,6 +172,14 @@ $EDITOR ~/.config/opencode/opencode.json
 
 If you already have `"opencode-mobile@latest"` in that array, replace it --
 running both loads two copies of the plugin and they will fight over the port.
+
+Node 18 or newer is enough to build. The plugin itself runs under Bun inside
+OpenCode, so its runtime does not depend on your Node version -- but the test
+suite needs Node 20 or newer, because vitest 4 requires it.
+
+If you cloned before the dependency cleanup and `npm install` fails on
+`cloudflared`'s postinstall with `Text file busy` (exit code 126), see
+[Install fails on cloudflared](#install-fails-on-cloudflared).
 
 The `/mobile` command is optional -- the QR code is printed automatically when
 the tunnel starts. If you want the command anyway, note that the installer has no
@@ -341,6 +354,14 @@ are all covered by the same credential.
 
 ## Configuration
 
+### Requirements
+
+- Node 18+ to build. The plugin runs under Bun inside OpenCode, so its runtime is
+  independent of your Node version; the test suite needs Node 20+ (vitest 4).
+- `cloudflared`, `ngrok`, or nothing (localtunnel needs no binary). Install the
+  tunnel binary with your system package manager -- the plugin looks for it on
+  your PATH and in the usual locations, and does not ship one.
+
 ### Environment Variables
 
 | Variable | Description | Default |
@@ -430,6 +451,41 @@ cat ~/.config/opencode/opencode.json
 npx opencode-mobile uninstall --yes
 npx opencode-mobile install
 ```
+
+### Install fails on cloudflared
+
+**Problem**: `npm install` ends with
+
+```
+npm ERR! code 126
+npm ERR! path .../node_modules/cloudflared
+npm ERR! command sh -c node scripts/postinstall.js && node lib/index.js -v
+npm ERR! Installed cloudflared to .../node_modules/cloudflared/bin/cloudflared
+npm ERR! /bin/sh: 1: .../node_modules/cloudflared/bin/cloudflared: Text file busy
+```
+
+The `cloudflared` npm package downloads a binary in its postinstall and then
+execs it to check the version. `Text file busy` (ETXTBSY) means the file was
+still held open when it tried -- most often because a `cloudflared` process
+started from that same path is still running.
+
+**That package is no longer a dependency.** The plugin never imported it: it
+locates `cloudflared` on your PATH and in the usual install locations
+(`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `~/.cloudflared`, linuxbrew),
+or at whatever path tunnel setup saved. Pull and reinstall:
+
+```bash
+git pull
+rm -rf node_modules
+npm ci
+```
+
+On an older checkout, either stop any running `opencode serve` / `cloudflared`
+first and retry, or install with `npm install --ignore-scripts` -- the downloaded
+binary is unused either way.
+
+Install `cloudflared` itself with your system package manager (`brew install
+cloudflared`, or Cloudflare's apt/yum repo), not through npm.
 
 ### Overlay not appearing on the phone
 
