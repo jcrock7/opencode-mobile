@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Load this fork from a local checkout rather than the npm package.
+  //
+  // The npm spec "opencode-mobile@latest" resolves to the upstream package and
+  // does NOT include the mobile web overlay. A file:// spec points OpenCode at
+  // your build instead.
+  //
+  // Two rules:
+  //   1. The path must be ABSOLUTE and must match where you cloned the repo.
+  //      Run `npm run print-config` in the checkout to get it filled in.
+  //   2. Do not list both this and "opencode-mobile@latest" -- that loads two
+  //      copies of the plugin and they contend for the same port.
+  //
+  // `npm run build` must have been run: OpenCode loads dist/index.js.
+  "plugin": ["file:///home/jared/repos/opencode-mobile"]
+}

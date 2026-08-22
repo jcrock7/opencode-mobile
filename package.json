@@ -96,7 +96,8 @@
     "audit:build": "npm run build && node bin/audit --help",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "print-config": "node scripts/print-global-config.mjs"
   },
   "engines": {
     "node": ">=18"

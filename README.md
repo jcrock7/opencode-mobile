@@ -170,8 +170,23 @@ $EDITOR ~/.config/opencode/opencode.json
 }
 ```
 
-If you already have `"opencode-mobile@latest"` in that array, replace it --
-running both loads two copies of the plugin and they will fight over the port.
+There is a ready-made copy of this at [`examples/opencode.json`](examples/opencode.json)
+(and a commented [`examples/opencode.jsonc`](examples/opencode.jsonc)).
+
+To skip editing the path by hand, let the repo resolve it:
+
+```bash
+npm run print-config              # print it, merged over your existing settings
+npm run print-config -- --merge    # write it to ~/.config/opencode/ (backs up first)
+```
+
+`--merge` preserves your other settings and plugins, drops a stale
+`opencode-mobile@latest` entry, refuses to touch a config it cannot parse, and is
+safe to run twice.
+
+If you edit by hand instead: the path must be **absolute**, and if you already
+have `"opencode-mobile@latest"` in that array, **replace** it -- running both
+loads two copies of the plugin and they will contend for the same port.
 
 Node 18 or newer is enough to build. The plugin itself runs under Bun inside
 OpenCode, so its runtime does not depend on your Node version -- but the test
@@ -345,6 +360,8 @@ are all covered by the same credential.
 | `npx opencode-mobile install [options]` | Install plugin and `/mobile` command globally |
 | `npx opencode-mobile update [--check]` | Check for updates or install the latest version |
 | `npx opencode-mobile filters <status\|enable\|disable>` | Manage session notification filters |
+| `npm run print-config` | Print the global config to load this checkout as a plugin |
+| `npm run print-config -- --merge` | Write that config to `~/.config/opencode/` |
 | `/mobile` | Display QR code for mobile connection |
 | `/mobile ExponentPushToken[xxx]` | Manually register a push token |
 | `npx opencode-mobile qr <tunnels.json>` | Show QR from tunnel metadata JSON |
@@ -533,6 +550,8 @@ npx opencode-mobile install
 ```
 opencode-mobile/
 ├── index.ts              # Main plugin entry point (server + routing)
+├── examples/            # Global OpenCode config to copy (see examples/README.md)
+├── scripts/             # print-global-config.mjs (npm run print-config)
 ├── src/
 │   ├── tunnel/          # Tunnel providers (ngrok, cloudflare, localtunnel)
 │   ├── push/            # Push notification logic
