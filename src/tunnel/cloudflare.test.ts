@@ -127,7 +127,9 @@ describe("cloudflare provider", () => {
       const result = await createCloudflareTunnel(
         { port: 3000 },
         mockSpawn,
-        () => true // cloudflared exists
+        () => true, // cloudflared exists
+        undefined,
+        () => null // force free-tier branch (no saved config)
       );
       
       expect(result.provider).toBe("cloudflare");
@@ -164,7 +166,8 @@ describe("cloudflare provider", () => {
         () => true,
         (url) => {
           capturedUrl = url;
-        }
+        },
+        () => null // force free-tier branch (no saved config)
       );
       
       expect(capturedUrl).toBe(result.url);

@@ -157,7 +157,8 @@ export function createCloudflareTunnel(
   config: TunnelConfig,
   spawnFn?: typeof spawn,
   existsSyncFn?: (path: string) => boolean,
-  onUrl?: (url: string) => void
+  onUrl?: (url: string) => void,
+  loadConfig?: () => SavedConfig | null
 ): Promise<TunnelInfo> {
   // Validate port
   if (!config.port || typeof config.port !== "number") {
@@ -165,10 +166,15 @@ export function createCloudflareTunnel(
   }
 
   const spawnModule = spawnFn || spawn;
-  const saved = loadSavedConfig();
+  const saved = (loadConfig || loadSavedConfig)();
   const binary = saved?.cloudflaredPath && fs.existsSync(saved.cloudflaredPath)
     ? saved.cloudflaredPath
     : getSavedCloudflaredPath() || "cloudflared";
+
+  const checkExists = existsSyncFn || ((p: string) => fs.existsSync(p));
+  if (!checkExists(binary)) {
+    return Promise.reject(new Error("cloudflared not found"));
+  }
 
   // Custom domain mode: drive a named tunnel bound to a DNS hostname.
   const isCustom = saved?.mode === "custom" && !!saved?.domain && !!saved?.tunnelName;
