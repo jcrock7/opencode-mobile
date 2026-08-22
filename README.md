@@ -139,6 +139,98 @@ https://your-tunnel-url.ngrok.io
 The tunnel client runs on your machine and dials loopback, so the plugin binds
 `127.0.0.1` only and is never exposed on your LAN.
 
+## Installing this fork
+
+`npx opencode-mobile install` registers the **npm package**, which is upstream.
+It will not give you the mobile overlay. To run this fork, point OpenCode at your
+local checkout instead.
+
+```bash
+# 1. Get the code and build it. The plugin's entry point is dist/index.js, so
+#    the build is required -- OpenCode loads the compiled output, not the source.
+git clone https://github.com/jcrock7/opencode-mobile
+cd opencode-mobile
+npm install
+npm run build
+
+# 2. Register it in your global OpenCode config as a file:// spec.
+#    Use the absolute path to the checkout.
+$EDITOR ~/.config/opencode/opencode.json
+```
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:///absolute/path/to/opencode-mobile"]
+}
+```
+
+If you already have `"opencode-mobile@latest"` in that array, replace it --
+running both loads two copies of the plugin and they will fight over the port.
+
+The `/mobile` command is optional -- the QR code is printed automatically when
+the tunnel starts. If you want the command anyway, note that the installer has no
+flag to add *only* it: `install` always writes `opencode-mobile@latest` into the
+plugin array as well. So run it first, then point the config at your fork:
+
+```bash
+# optional: writes ~/.config/opencode/commands/mobile.md
+# (also adds the npm spec, which step 2 above then replaces)
+node bin/audit install --skip-tunnel-setup --skip-update-check
+```
+
+Use `--dry-run` first if you want to see what it would change.
+
+```bash
+# 3. Start OpenCode in serve mode. The plugin's server and tunnel only start
+#    when the `serve` subcommand is present -- plain `opencode` and
+#    `opencode attach` deliberately skip them.
+export OPENCODE_SERVER_PASSWORD='a-long-random-string'   # see Securing the tunnel
+opencode serve
+```
+
+On startup you should see the plugin announce its version and its routes:
+
+```
+[opencode-mobile] v1.4.0
+[Push] Server running on 127.0.0.1:4097
+[Push] /__oc-mobile/overlay.css → mobile overlay stylesheet
+[Push] /__oc-mobile/overlay.js → session switcher
+[Push] /* → OpenCode on port 4096 (HTML gets the overlay)
+[Tunnel] Cloudflare started: https://<something>.trycloudflare.com
+```
+
+The version line is a useful check: `v1.4.0` means the built `dist/` copy loaded.
+`vunknown` means OpenCode picked up the TypeScript source directly, which is fine
+in development but means you are not running what `npm run build` produced.
+
+### Using it
+
+Open the tunnel URL in Safari and add it to your Home Screen -- OpenCode's web UI
+already ships the PWA manifest, so it runs standalone. The overlay applies
+automatically at 767px and below.
+
+Type `/mobile` inside OpenCode to print the QR code for the tunnel URL, or to
+register a push token.
+
+### Updating after a code change
+
+```bash
+git pull
+npm run build
+# restart `opencode serve`
+```
+
+The overlay assets are revalidated rather than fingerprinted, so hard-reload the
+page on your phone after an upgrade if it looks stale.
+
+### A note on runtimes
+
+OpenCode runs on Bun, and so does this plugin. The compiled output uses
+extensionless relative imports, which Bun resolves and Node's ESM loader does
+not -- so `node dist/index.js` fails while `bun dist/index.js` works. That is
+expected; it only matters if you try to smoke-test the build with Node.
+
 ## Mobile web overlay
 
 If you browse to the tunnel URL on your phone, you get OpenCode's own web UI. It is
