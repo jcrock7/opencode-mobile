@@ -11,6 +11,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
@@ -31,12 +32,12 @@ const merge = process.argv.includes("--merge");
 function readExisting() {
   if (!existsSync(target)) return null;
   const raw = readFileSync(target, "utf-8");
-  try {
-    // Tolerate // comments so a .jsonc file can be read without a parser dep.
-    return JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ""));
-  } catch {
-    return undefined; // present but unparseable
-  }
+  const errors = [];
+  // jsonc-parser handles comments and trailing commas, which a plain
+  // JSON.parse would choke on -- and this config is commonly a .jsonc.
+  const value = parseJsonc(raw, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || value === undefined) return undefined;
+  return value;
 }
 
 function warnIfBuildMissing() {
@@ -89,11 +90,7 @@ const plugins = Array.isArray(base.plugin) ? base.plugin : [];
 const dropped = plugins.filter((p) => String(p).startsWith("opencode-mobile@"));
 const kept = plugins.filter((p) => p !== spec && !String(p).startsWith("opencode-mobile@"));
 
-const next = {
-  $schema: base.$schema ?? "https://opencode.ai/config.json",
-  ...stripKeys(base, ["$schema", "plugin"]),
-  plugin: [...kept, spec],
-};
+const nextPlugins = [...kept, spec];
 
 mkdirSync(configDir, { recursive: true });
 if (existsSync(target)) {
@@ -101,7 +98,28 @@ if (existsSync(target)) {
   writeFileSync(backup, readFileSync(target));
   console.log(`backed up existing config to ${backup}`);
 }
-writeFileSync(target, JSON.stringify(next, null, 2) + "\n");
+
+if (existsSync(target)) {
+  // Surgical edit: rewrite only the "plugin" key, so comments, key order and
+  // formatting in the rest of the file survive. Matters because this config is
+  // usually hand-maintained.
+  const raw = readFileSync(target, "utf-8");
+  const edits = modify(raw, ["plugin"], nextPlugins, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  });
+  let updated = applyEdits(raw, edits);
+  if (!updated.endsWith("\n")) updated += "\n";
+  writeFileSync(target, updated);
+} else {
+  writeFileSync(
+    target,
+    JSON.stringify(
+      { $schema: "https://opencode.ai/config.json", plugin: nextPlugins },
+      null,
+      2,
+    ) + "\n",
+  );
+}
 
 console.log(`registered plugin ${spec}`);
 if (dropped.length) console.log(`removed ${JSON.stringify(dropped)} (upstream npm package)`);
