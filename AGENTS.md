@@ -22,10 +22,14 @@ npm run build
 
 # Testing with vitest
 npx vitest run                    # Run all tests
+npx vitest run --coverage         # Run with coverage (85% threshold, enforced)
 npx vitest run src/tunnel/        # Run tunnel tests
 npx vitest run src/tunnel/localtunnel.test.ts  # Run specific test file
 npx vitest run --reporter=verbose # Verbose output
 npx vitest ui                     # Interactive UI (http://localhost:51204/__vitest__)
+
+# Opt-in live suites (need real credentials / network)
+OPENCODE_TEST_NGROK_LIVE=1 npx vitest run src/tunnel/ngrok.test.ts
 
 # Version and release
 npm version patch && npm run build && npm publish  # Patch release
@@ -53,7 +57,17 @@ plugin/
 │   │   ├── formatter.ts  # Notification formatting
 │   │   ├── sender.ts     # Expo API sender
 │   │   └── notification-handler.ts  # Session notification (commented)
-│   └── proxy/            # Reverse proxy utilities
+│   ├── proxy/            # Reverse proxy to OpenCode
+│   │   ├── forward.ts    # Streaming proxy + HTML rewrite hook + upgrades
+│   │   ├── route.ts      # Pure request routing (pure -> testable)
+│   │   └── *.test.ts     # Integration tests against real http servers
+│   └── overlay/          # Mobile web overlay injected into OpenCode's UI
+│       ├── config.ts     # Env-driven config + asset route constants
+│       ├── inject.ts     # Pure HTML tag injection (idempotent)
+│       ├── mobile-css.ts # The injected stylesheet
+│       ├── mobile-js.ts  # The injected session switcher
+│       ├── serve.ts      # Asset serving (content types, ETag, 304)
+│       └── *.test.ts     # Unit tests (vitest)
 ├── vitest.config.ts      # Test configuration
 ├── tsconfig.json         # TypeScript config (strict mode, bundler)
 └── package.json          # Dependencies + scripts
@@ -290,6 +304,25 @@ signals.forEach((signal) => {
 7. **Tunnel Providers**: Support ngrok, cloudflare, localtunnel with fallback
 8. **Ngrok Multi-Strategy**: 4 fallback strategies if one fails
 9. **Serve Mode Gate**: Only start the LAN server + auto-tunnel when `process.argv` includes `serve`; do NOT infer serve mode from `ctx.serverUrl` (it can be present for `opencode debug wait`)
+10. **Tunnel Targets the Plugin**: The tunnel points at `pluginPort`, and the plugin
+    reverse-proxies to OpenCode. This is what lets it serve and inject the mobile
+    overlay. The plugin still binds `127.0.0.1` only -- the tunnel client is a local
+    process dialling loopback.
+11. **Only HTML is Buffered**: `src/proxy/forward.ts` streams every response except
+    `text/html`. Buffering the SSE stream at `/event` would stall the UI, so any
+    change there must keep the streaming path intact (see the SSE test in
+    `forward.test.ts`).
+12. **Forward the CSP Verbatim**: OpenCode's `content-security-policy` embeds a hash
+    of its own theme-preload script. Never recompute or drop it. The overlay is
+    designed to fit the existing policy (`style-src 'unsafe-inline'` for the
+    stylesheet, `script-src 'self'` for the same-origin script).
+13. **Segment-Aware Route Prefixes**: Use `matchesPrefix` in `src/proxy/route.ts`, not
+    `startsWith`. Now that the plugin fronts the whole OpenCode API, a raw
+    `startsWith("/tunnel")` would swallow real routes like `/tunnelling`.
+14. **Overlay Selectors are Best-Effort**: The overlay targets OpenCode's
+    `data-component` / `data-slot` attributes. If upstream renames one, the rule
+    stops applying -- acceptable. Never make the page's function depend on a rule
+    landing.
 
 ## Configuration
 
@@ -327,6 +360,36 @@ export default defineConfig({
   },
 });
 ```
+
+## Coverage
+
+`vitest.config.ts` enforces an 85% threshold on statements, branches, functions
+and lines, measured with `all: true` over `src/overlay`, `src/proxy`, `src/push`
+and `src/tunnel`. Because `all` is on, adding an untested module lowers the score
+rather than being invisible -- new code needs tests to land.
+
+Excluded from the measurement, deliberately:
+
+| Excluded | Why |
+|---|---|
+| `**/types.ts` | Type-only; compiles to nothing and reports as 0/0 |
+| `**/index.ts` | Barrels; re-exports with no logic |
+| `index.ts` (root) | Plugin entry with module-load side effects. Its routing was extracted to `src/proxy/route.ts` so it could be tested. |
+| `src/cli/**` | One-shot interactive installers, no runtime role in a session |
+
+**Testing network-dependent code.** Nothing in the default suite may touch the
+network or require an external binary. The providers all expose dependency
+injection for this -- use it rather than skipping:
+
+- `createLocaltunnel(config, { localtunnelModule })`
+- `createCloudflareTunnel(config, spawnFn, existsSyncFn, onUrl, loadConfig)`
+- ngrok has no factory; mock `@ngrok/ngrok` and `child_process` instead
+- Modules that resolve paths from `process.env.HOME` at import time (token-store,
+  metadata, filters, cloudflare config, ngrok config) need HOME redirected to a
+  temp dir plus `vi.resetModules()` before a dynamic import
+
+Live suites are gated behind an env var (`OPENCODE_TEST_NGROK_LIVE=1`) and are
+skipped by default.
 
 ## Runtime
 

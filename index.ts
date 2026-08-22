@@ -1,10 +1,20 @@
 /**
- * opencode-mobile plugin - LAN-only push notification server
- * 
+ * opencode-mobile plugin - push notifications + mobile web overlay
+ *
  * Architecture:
- * - Plugin server: LAN only (127.0.0.1) - handles /push-token and /tunnel endpoints
- * - Tunnel: Points directly to OpenCode server (not through plugin)
- * - Mobile connects: tunnel → OpenCode (SSE), or LAN → plugin (push tokens)
+ * - Plugin server: binds 127.0.0.1 only. The tunnel client runs on this
+ *   machine and dials loopback, so the phone can reach the plugin without the
+ *   plugin ever being exposed on the LAN.
+ * - Tunnel: points at the PLUGIN, which reverse-proxies everything to OpenCode.
+ * - Plugin routes:
+ *     /push-token/*      push token management (local)
+ *     /tunnel/*          tunnel management (local)
+ *     /__oc-mobile/*     mobile overlay assets (CSS + session switcher)
+ *     /*                 forwarded to OpenCode; text/html gets the overlay
+ *                        <link>/<script> injected on the way past
+ * - Mobile connects: tunnel -> plugin -> OpenCode (REST + SSE + WebSocket)
+ *
+ * Set OPENCODE_MOBILE_OVERLAY=0 to make the plugin a transparent pass-through.
  */
 
 import * as fs from "fs";
@@ -32,7 +42,7 @@ const debugLog = (...args: unknown[]): void => {
 };
 
 debugLog("\n=== opencode-mobile DEV ===");
-debugLog("LAN-only architecture: plugin handles push tokens, tunnel goes to OpenCode directly");
+debugLog("Proxy architecture: tunnel -> plugin -> OpenCode, with the mobile overlay injected into HTML");
 debugLog("[PushPlugin][Mobile] Entry loaded: index.ts");
 
 import * as path from "path";
@@ -49,6 +59,15 @@ import { displayQRCode, generateQRCodeAscii, generateQRCodeAsciiPlain } from "./
 import { startNgrokTunnel, stopNgrokTunnel, isNgrokInstalled } from "./src/tunnel/ngrok";
 import { startCloudflareTunnel, stopCloudflareTunnel, getCloudflareUrl, isCloudflareInstalled } from "./src/tunnel/cloudflare";
 import { updateTunnelMetadata, clearTunnelMetadata, loadTunnelMetadata } from "./src/tunnel/metadata";
+import {
+  loadOverlayConfig,
+  handleOverlayAsset,
+  pathnameOf,
+  OVERLAY_CSS_PATH,
+  OVERLAY_JS_PATH,
+} from "./src/overlay";
+import { forwardRequest, forwardUpgrade, type ForwardOptions } from "./src/proxy/forward";
+import { routeRequest } from "./src/proxy/route";
 
 function logPluginVersion(ctx: Parameters<Plugin>[0]): void {
   const client = (ctx as any)?.client;
@@ -563,7 +582,11 @@ async function handlePushToken(req: http.IncomingMessage, res: http.ServerRespon
 /**
  * Handle tunnel requests (LAN only)
  */
-async function handleTunnel(req: http.IncomingMessage, res: http.ServerResponse, openCodePort: number): Promise<void> {
+async function handleTunnel(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  defaultTargetPort: number,
+): Promise<void> {
   let body = "";
   if (req.method === "POST") {
     req.on("data", (chunk) => { body += chunk; });
@@ -573,7 +596,7 @@ async function handleTunnel(req: http.IncomingMessage, res: http.ServerResponse,
   if (req.url === "/tunnel" && req.method === "POST") {
     try {
       const data = JSON.parse(body);
-      const targetPort = data.port || openCodePort;
+      const targetPort = data.port || defaultTargetPort;
 
       console.log("[Tunnel] Starting to port:", targetPort);
 
@@ -645,7 +668,7 @@ async function handleTunnel(req: http.IncomingMessage, res: http.ServerResponse,
         url: activeTunnel.url,
         tunnelId: activeTunnel.tunnelId,
         port: activeTunnel.port,
-        targetPort: openCodePort,
+        targetPort: defaultTargetPort,
         metadata: storedMetadata
       }));
       return;
@@ -695,31 +718,53 @@ async function handleTunnel(req: http.IncomingMessage, res: http.ServerResponse,
  */
 async function startServer(port: number, openCodePort: number): Promise<boolean> {
   return new Promise((resolve) => {
+    const overlay = loadOverlayConfig();
+    const forwardOptions: ForwardOptions = {
+      targetPort: openCodePort,
+      overlay: overlay.enabled ? overlay : null,
+      cssPath: OVERLAY_CSS_PATH,
+      jsPath: overlay.sessionStrip ? OVERLAY_JS_PATH : undefined,
+    };
+
     httpServer = http.createServer((clientReq, clientRes) => {
-      // CORS preflight
-      if (clientReq.method === "OPTIONS") {
-        clientRes.writeHead(204, cors);
-        clientRes.end();
-        return;
+      const pathname = pathnameOf(clientReq.url || "");
+      const route = routeRequest({
+        pathname,
+        method: clientReq.method,
+        overlayEnabled: overlay.enabled,
+      });
+
+      switch (route.kind) {
+        case "cors-preflight":
+          clientRes.writeHead(204, cors);
+          clientRes.end();
+          return;
+
+        case "push-token":
+          handlePushToken(clientReq, clientRes);
+          return;
+
+        case "tunnel":
+          handleTunnel(clientReq, clientRes, port);
+          return;
+
+        case "overlay-asset":
+          // Served same-origin so it satisfies OpenCode's `script-src 'self'`.
+          if (handleOverlayAsset(pathname, clientReq, clientRes, overlay)) return;
+          break;
+
+        case "forward":
+          break;
       }
 
-      const url = clientReq.url || "";
+      // Everything else belongs to OpenCode.
+      forwardRequest(clientReq, clientRes, forwardOptions);
+    });
 
-      // Handle /push-token endpoints (LAN only)
-      if (url.startsWith("/push-token")) {
-        handlePushToken(clientReq, clientRes);
-        return;
-      }
-
-      // Handle /tunnel endpoints (LAN only)
-      if (url.startsWith("/tunnel")) {
-        handleTunnel(clientReq, clientRes, openCodePort);
-        return;
-      }
-
-      // Everything else: 404 (LAN only, no proxy)
-      clientRes.writeHead(404, cors);
-      clientRes.end("Not found - LAN-only server");
+    // WebSocket and other protocol upgrades have to be proxied explicitly;
+    // they are not request/response pairs.
+    httpServer.on("upgrade", (clientReq, clientSocket, head) => {
+      forwardUpgrade(clientReq, clientSocket, head, forwardOptions);
     });
 
     httpServer.on("error", (err: any) => {
@@ -732,12 +777,23 @@ async function startServer(port: number, openCodePort: number): Promise<boolean>
       }
     });
 
-    // Listen on 127.0.0.1 only (LAN only, not exposed externally)
+    // Bind to 127.0.0.1 only. The tunnel client (cloudflared/ngrok/localtunnel)
+    // runs on this machine and connects to http://127.0.0.1:<port>, so the
+    // server never needs to be reachable on the LAN to be reachable from the
+    // phone -- and staying on loopback keeps it off the local network.
     httpServer.listen(port, "127.0.0.1", () => {
-      console.log(`[Push] LAN-only server running on port ${port}`);
+      console.log(`[Push] Server running on 127.0.0.1:${port}`);
       console.log(`[Push] /push-token/* → push token management`);
       console.log(`[Push] /tunnel/* → tunnel management`);
-      console.log(`[Push] Tunnel target: OpenCode on port ${openCodePort}`);
+      if (overlay.enabled) {
+        console.log(`[Push] ${OVERLAY_CSS_PATH} → mobile overlay stylesheet`);
+        if (overlay.sessionStrip) {
+          console.log(`[Push] ${OVERLAY_JS_PATH} → session switcher`);
+        }
+        console.log(`[Push] /* → OpenCode on port ${openCodePort} (HTML gets the overlay)`);
+      } else {
+        console.log(`[Push] /* → OpenCode on port ${openCodePort} (overlay disabled)`);
+      }
       resolve(true);
     });
   });
@@ -802,10 +858,13 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
     };
   }
 
-  // Auto-start tunnel pointing to OpenCode DIRECTLY (not through plugin!)
+  // Auto-start tunnel pointing at the PLUGIN, which forwards everything to
+  // OpenCode. Routing through the plugin is what lets it serve the mobile
+  // overlay assets and inject them into OpenCode's own web UI; set
+  // OPENCODE_MOBILE_OVERLAY=0 and the plugin becomes a transparent pass-through.
   debugLog("[DEV] Auto-starting tunnel...");
   try {
-    const tunnel = await startTunnelWithFallback(openCodePort);
+    const tunnel = await startTunnelWithFallback(pluginPort);
     debugLog("[DEV] Tunnel started:", tunnel.url);
     activeTunnel = tunnel;
     await displayQRCode(tunnel.url);

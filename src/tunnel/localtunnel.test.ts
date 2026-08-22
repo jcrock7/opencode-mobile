@@ -8,13 +8,44 @@
  * - Port validation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+/**
+ * Mock the localtunnel package for the whole file.
+ *
+ * These tests previously called the real service -- the original source even
+ * said so ("This creates a real tunnel - in unit tests we would mock
+ * localtunnelModule"). That made them fail wherever there is no outbound
+ * network. The assertions are unchanged; only the transport is faked.
+ */
+const mockTunnels: Array<{ url: string; closed: boolean }> = [];
+
+vi.mock("localtunnel", () => ({
+  default: (
+    options: { port: number; subdomain?: string },
+    callback: (err: unknown, tunnel: unknown) => void,
+  ) => {
+    const subdomain = options.subdomain || `mock-${options.port}`;
+    const tunnel = {
+      url: `https://${subdomain}.loca.lt`,
+      closed: false,
+      close() {
+        this.closed = true;
+      },
+      on: () => {},
+    };
+    mockTunnels.push(tunnel);
+    setTimeout(() => callback(null, tunnel), 0);
+    return tunnel;
+  },
+}));
 
 describe("localtunnel provider", () => {
   beforeEach(async () => {
     // Clear state before each test
     const { clearInstance } = await import("./localtunnel");
     clearInstance();
+    mockTunnels.length = 0;
   });
 
   afterEach(async () => {
@@ -28,7 +59,6 @@ describe("localtunnel provider", () => {
     it("should accept valid port configuration", async () => {
       const { createLocaltunnel } = await import("./localtunnel");
       
-      // This creates a real tunnel - in unit tests we would mock localtunnelModule
       const result = await createLocaltunnel({ port: 3000 });
       
       expect(result).toHaveProperty("url");

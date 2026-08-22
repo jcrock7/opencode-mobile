@@ -222,7 +222,10 @@ export function createCloudflareTunnel(
       60000
     );
 
-    const process = spawn(binary, [
+    // Use the injected spawn, same as the custom-domain branch above. Calling
+    // the real `spawn` here made the `spawnFn` parameter a no-op on the default
+    // (free-tier) path, so tests that inject a mock still shelled out.
+    const process = spawnModule(binary, [
       "tunnel",
       "--url",
       `http://127.0.0.1:${config.port}`,
@@ -280,20 +283,6 @@ export function createCloudflareTunnel(
       }
     });
   });
-}
-
-function findCloudflareD(
-  paths: string[],
-  existsSync?: (path: string) => boolean
-): string | null {
-  const checkExists = existsSync || ((p: string) => require("fs").existsSync(p));
-  
-  for (const p of paths) {
-    try {
-      if (checkExists(p)) return p;
-    } catch {}
-  }
-  return null;
 }
 
 /**

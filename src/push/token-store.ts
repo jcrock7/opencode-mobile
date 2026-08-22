@@ -33,12 +33,36 @@ export function saveTokens(tokens: PushToken[]): void {
 }
 
 /**
- * Truncate text to a maximum length
+ * Truncate text to a maximum length, flattening it onto a single line.
+ *
+ * For the collapsed one-line preview only. Use `truncateMultiline` for the
+ * expanded body, where the agent's line structure is what makes it readable.
  */
 export function truncate(text: string | undefined, max: number): string {
   if (!text) return "";
-  const cleaned = text.replace(/\n/g, " ").trim();
+  const cleaned = text.replace(/\s*\n+\s*/g, " ").trim();
   return cleaned.length <= max
     ? cleaned
     : cleaned.substring(0, max - 3) + "...";
+}
+
+/**
+ * Truncate text but keep its line structure.
+ *
+ * Agent messages are usually a summary line followed by bullets. Flattening
+ * that into one run-on sentence is the single biggest hit to readability on a
+ * lock screen, so the expanded notification body keeps the newlines and only
+ * collapses blank-line runs.
+ */
+export function truncateMultiline(text: string | undefined, max: number): string {
+  if (!text) return "";
+  const cleaned = text
+    .replace(/\r\n/g, "\n")
+    // Collapse runs of blank lines to one, and trim trailing spaces per line.
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return cleaned.length <= max
+    ? cleaned
+    : cleaned.substring(0, max - 3).trimEnd() + "...";
 }
