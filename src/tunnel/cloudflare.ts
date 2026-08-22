@@ -45,16 +45,38 @@ const CONFIG_FILE = path.join(os.homedir(), ".config", "opencode-mobile", "tunne
 
 interface SavedConfig {
   provider?: string;
+  mode?: "free" | "custom";
+  domain?: string;
+  tunnelName?: string;
   cloudflaredPath?: string;
 }
 
-function getSavedCloudflaredPath(): string | null {
+function loadSavedConfig(): SavedConfig | null {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
-      const content = fs.readFileSync(CONFIG_FILE, "utf-8");
-      const config = JSON.parse(content) as SavedConfig;
-      if (config.cloudflaredPath && fs.existsSync(config.cloudflaredPath)) {
-        return config.cloudflaredPath;
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as SavedConfig;
+    }
+  } catch {}
+  return null;
+}
+
+function getSavedCloudflaredPath(): string | null {
+  const saved = loadSavedConfig();
+  if (saved?.cloudflaredPath && fs.existsSync(saved.cloudflaredPath)) {
+    return saved.cloudflaredPath;
+  }
+  return null;
+}
+
+function findTunnelCredential(): string | null {
+  const credsDir = path.join(os.homedir(), ".cloudflared");
+  if (!fs.existsSync(credsDir)) return null;
+  try {
+    const entries = fs.readdirSync(credsDir) as string[];
+    for (const name of entries) {
+      if (name.endsWith(".json")) {
+        const full = path.join(credsDir, name);
+        if (fs.existsSync(full)) return full;
       }
     }
   } catch {}
@@ -80,6 +102,54 @@ export function findCloudflared(
 }
 
 /**
+ * Provision a named tunnel and route a DNS hostname to it (idempotent).
+ * Runs best-effort: failures are logged, not fatal — the tunnel may already
+ * exist and be routed.
+ */
+function ensureNamedTunnel(binary: string, tunnelName: string, domain: string): void {
+  try {
+    execSync(`"${binary}" tunnel create "${tunnelName}"`, {
+      stdio: "ignore",
+      timeout: 30000,
+    });
+  } catch {}
+  try {
+    execSync(`"${binary}" tunnel route dns --overwrite-dns "${tunnelName}" "${domain}"`, {
+      stdio: "ignore",
+      timeout: 30000,
+    });
+  } catch {}
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForTunnelReady(url: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          signal: controller.signal,
+          headers: { "Connection": "close" },
+        });
+        if (res.status !== 530 && res.status !== 429) {
+          return;
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch {}
+    await sleepMs(2000);
+  }
+  throw new Error("Timed out waiting for Cloudflare custom tunnel to become ready");
+}
+
+/**
  * Create a cloudflare tunnel instance
  * This function is testable - accepts external spawn and existsSync
  */
@@ -95,7 +165,50 @@ export function createCloudflareTunnel(
   }
 
   const spawnModule = spawnFn || spawn;
-  const cloudflaredPath = getSavedCloudflaredPath() || "cloudflared";
+  const saved = loadSavedConfig();
+  const binary = saved?.cloudflaredPath && fs.existsSync(saved.cloudflaredPath)
+    ? saved.cloudflaredPath
+    : getSavedCloudflaredPath() || "cloudflared";
+
+  // Custom domain mode: drive a named tunnel bound to a DNS hostname.
+  const isCustom = saved?.mode === "custom" && !!saved?.domain && !!saved?.tunnelName;
+  if (isCustom) {
+    const domain = saved!.domain!;
+    const tunnelName = saved!.tunnelName!;
+    ensureNamedTunnel(binary, tunnelName, domain);
+    const credential = findTunnelCredential();
+    const args = credential
+      ? ["tunnel", "--no-autoupdate", "run", "--url", `http://127.0.0.1:${config.port}`, "--cred-file", credential, tunnelName]
+      : ["tunnel", "--no-autoupdate", "run", "--url", `http://127.0.0.1:${config.port}`, tunnelName];
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Timeout waiting for cloudflared custom tunnel (60s)")),
+        60000
+      );
+      const process = spawnModule(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
+      _process = process;
+      const urlFull = `https://${domain}`;
+      void waitForTunnelReady(urlFull, 55000)
+        .then(() => {
+          clearTimeout(timeout);
+          _url = urlFull;
+          if (onUrl) onUrl(urlFull);
+          else console.log("[Cloudflared] URL:", urlFull);
+          resolve({
+            url: urlFull,
+            tunnelId: tunnelName,
+            port: config.port,
+            provider: "cloudflare",
+          });
+        })
+        .catch((err: Error) => {
+          clearTimeout(timeout);
+          _process = null;
+          reject(err);
+        });
+    });
+  }
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
@@ -103,7 +216,7 @@ export function createCloudflareTunnel(
       60000
     );
 
-    const process = spawnModule(cloudflaredPath, [
+    const process = spawn(binary, [
       "tunnel",
       "--url",
       `http://127.0.0.1:${config.port}`,
