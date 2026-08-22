@@ -37,6 +37,54 @@ const warn = (m) => console.log(`  warn  ${m}`);
 const info = (m) => console.log(`        ${m}`);
 const section = (m) => console.log(`\n${m}`);
 
+/**
+ * Listening TCP ports, via ss or lsof. Used to spot a stale `opencode serve`
+ * holding 4096 -- when that happens OpenCode silently falls back to a random
+ * port and the plugin follows it, so probing 4096/4097 tells you about the OLD
+ * instance rather than the one you just started.
+ */
+function listeningPorts() {
+  const out = [];
+  const tryCmd = (cmd) => {
+    try {
+      return execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return "";
+    }
+  };
+  let raw = tryCmd("ss -ltnp 2>/dev/null");
+  if (raw) {
+    for (const line of raw.split("\n").slice(1)) {
+      const port = line.match(/:(\d+)\s/);
+      const proc = line.match(/users:\(\("([^"]+)",pid=(\d+)/);
+      if (port) out.push({ port: Number(port[1]), name: proc?.[1] ?? "?", pid: proc?.[2] ?? "?" });
+    }
+    return out;
+  }
+  raw = tryCmd("lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null");
+  for (const line of raw.split("\n").slice(1)) {
+    const cols = line.split(/\s+/);
+    const port = line.match(/:(\d+)\s*\(LISTEN\)/);
+    if (port) out.push({ port: Number(port[1]), name: cols[0] ?? "?", pid: cols[1] ?? "?" });
+  }
+  return out;
+}
+
+function opencodeProcesses() {
+  try {
+    const raw = execSync("ps -eo pid=,args= 2>/dev/null", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return raw
+      .split("\n")
+      .filter((l) => /opencode/.test(l) && /\bserve\b/.test(l) && !/doctor\.mjs|grep/.test(l))
+      .map((l) => l.trim());
+  } catch {
+    return [];
+  }
+}
+
 function readJson(path) {
   if (!existsSync(path)) return null;
   try {
@@ -148,8 +196,41 @@ if (!existsSync(distEntry)) {
   else ok(`overlay module present in the build`);
 }
 
-/* ---------- 3 & 4. listeners ---------- */
-section("3. local servers");
+/* ---------- 3. instances ---------- */
+section("3. running instances");
+const procs = opencodeProcesses();
+if (procs.length === 0) {
+  warn(`no 'opencode serve' process found -- start one before trusting the checks below`);
+} else {
+  for (const p of procs) info(p.slice(0, 150));
+  if (procs.length > 1) {
+    bad(`${procs.length} 'opencode serve' processes are running`);
+    info(`only the one that grabbed port ${OPENCODE_PORT} is being probed below.`);
+    info(`a stale instance keeps 4096, so a newly started one silently falls back`);
+    info(`to a random port -- kill them all and start exactly one:`);
+    info(`  pkill -f 'opencode serve' ; pkill -f cloudflared`);
+  } else {
+    ok(`one 'opencode serve' process`);
+  }
+}
+
+const listeners = listeningPorts();
+const ocListener = listeners.find((l) => l.port === OPENCODE_PORT);
+const suspects = listeners.filter(
+  (l) => /opencode|bun|node/i.test(l.name) && l.port !== OPENCODE_PORT && l.port !== PLUGIN_PORT && l.port > 1024,
+);
+if (ocListener) {
+  info(`port ${OPENCODE_PORT} held by ${ocListener.name} (pid ${ocListener.pid})`);
+}
+if (suspects.length) {
+  warn(`other node/bun listeners: ${suspects.map((s) => `${s.port} (${s.name})`).join(", ")}`);
+  info(`if OpenCode logged a port other than ${OPENCODE_PORT} on startup, then ${OPENCODE_PORT}`);
+  info(`was already taken and you are looking at a different, older instance.`);
+  info(`re-run with the real port:  OPENCODE_PORT=<that port> node scripts/doctor.mjs`);
+}
+
+/* ---------- 4. listeners ---------- */
+section("4. local servers");
 const oc = await probe(`http://127.0.0.1:${OPENCODE_PORT}/`, { headers: { accept: "text/html" } });
 if (oc.error) {
   bad(`nothing answering on 127.0.0.1:${OPENCODE_PORT} (${oc.error})`);
@@ -191,7 +272,7 @@ if (pluginRoot.error) {
 }
 
 /* ---------- 5. where the tunnel points ---------- */
-section("4. tunnel");
+section("5. tunnel");
 const meta = readJson(join(configDir, "tunnel.json"));
 if (!meta || !meta.url) {
   warn(`no tunnel recorded in ${join(configDir, "tunnel.json")}`);
@@ -240,7 +321,7 @@ try {
 
 /* ---------- 6. the public URL ---------- */
 if (meta?.url) {
-  section("5. public tunnel URL");
+  section("6. public tunnel URL");
   const pub = await probe(meta.url, { timeout: 10000, headers: { accept: "text/html" } });
   if (pub.error) {
     warn(`could not reach ${meta.url} (${pub.error})`);
@@ -252,8 +333,15 @@ if (meta?.url) {
     warn(`HTTP ${pub.status} redirect to ${pub.headers?.get?.("location") ?? "?"}`);
   } else if (typeof pub.body === "string" && pub.body.includes("oc-mobile-overlay")) {
     ok(`public URL serves HTML with the overlay injected`);
+  } else if (pub.status >= 500) {
+    bad(`HTTP ${pub.status} from ${meta.url}`);
+    if (pub.status === 530) {
+      info(`530 is Cloudflare's "tunnel has no origin" error -- cloudflared is not`);
+      info(`running, or is not reachable. That HTML is Cloudflare's error page, not`);
+      info(`your app. Start the tunnel (restart 'opencode serve').`);
+    }
   } else {
-    bad(`public URL served HTML WITHOUT the overlay`);
+    bad(`HTTP ${pub.status}: served HTML WITHOUT the overlay`);
     info(`the tunnel is not going through the plugin`);
   }
 }
