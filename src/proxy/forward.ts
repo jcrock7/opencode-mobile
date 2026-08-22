@@ -32,6 +32,8 @@ export interface ForwardOptions {
   overlay: OverlayConfig | null;
   cssPath: string;
   jsPath?: string;
+  /** Buffer ceiling for HTML rewriting. Defaults to MAX_HTML_BYTES. */
+  maxHtmlBytes?: number;
 }
 
 type OutgoingHeaders = Record<string, string | string[]>;
@@ -133,6 +135,7 @@ export function forwardRequest(
       }
 
       // HTML: buffer, inject, re-length.
+      const ceiling = options.maxHtmlBytes ?? MAX_HTML_BYTES;
       const chunks: Buffer[] = [];
       let size = 0;
       let overflowed = false;
@@ -140,7 +143,7 @@ export function forwardRequest(
       proxyRes.on("data", (chunk: Buffer) => {
         if (overflowed) return;
         size += chunk.length;
-        if (size > MAX_HTML_BYTES) {
+        if (size > ceiling) {
           // Bail out of rewriting and stream what is left rather than holding
           // an unbounded buffer.
           overflowed = true;

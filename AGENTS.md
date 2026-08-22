@@ -22,10 +22,14 @@ npm run build
 
 # Testing with vitest
 npx vitest run                    # Run all tests
+npx vitest run --coverage         # Run with coverage (85% threshold, enforced)
 npx vitest run src/tunnel/        # Run tunnel tests
 npx vitest run src/tunnel/localtunnel.test.ts  # Run specific test file
 npx vitest run --reporter=verbose # Verbose output
 npx vitest ui                     # Interactive UI (http://localhost:51204/__vitest__)
+
+# Opt-in live suites (need real credentials / network)
+OPENCODE_TEST_NGROK_LIVE=1 npx vitest run src/tunnel/ngrok.test.ts
 
 # Version and release
 npm version patch && npm run build && npm publish  # Patch release
@@ -356,6 +360,36 @@ export default defineConfig({
   },
 });
 ```
+
+## Coverage
+
+`vitest.config.ts` enforces an 85% threshold on statements, branches, functions
+and lines, measured with `all: true` over `src/overlay`, `src/proxy`, `src/push`
+and `src/tunnel`. Because `all` is on, adding an untested module lowers the score
+rather than being invisible -- new code needs tests to land.
+
+Excluded from the measurement, deliberately:
+
+| Excluded | Why |
+|---|---|
+| `**/types.ts` | Type-only; compiles to nothing and reports as 0/0 |
+| `**/index.ts` | Barrels; re-exports with no logic |
+| `index.ts` (root) | Plugin entry with module-load side effects. Its routing was extracted to `src/proxy/route.ts` so it could be tested. |
+| `src/cli/**` | One-shot interactive installers, no runtime role in a session |
+
+**Testing network-dependent code.** Nothing in the default suite may touch the
+network or require an external binary. The providers all expose dependency
+injection for this -- use it rather than skipping:
+
+- `createLocaltunnel(config, { localtunnelModule })`
+- `createCloudflareTunnel(config, spawnFn, existsSyncFn, onUrl, loadConfig)`
+- ngrok has no factory; mock `@ngrok/ngrok` and `child_process` instead
+- Modules that resolve paths from `process.env.HOME` at import time (token-store,
+  metadata, filters, cloudflare config, ngrok config) need HOME redirected to a
+  temp dir plus `vi.resetModules()` before a dynamic import
+
+Live suites are gated behind an env var (`OPENCODE_TEST_NGROK_LIVE=1`) and are
+skipped by default.
 
 ## Runtime
 

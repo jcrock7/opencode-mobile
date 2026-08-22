@@ -13,6 +13,14 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   bodies keep the agent's line structure, errors get the same body budget and
   expanded style as completions, and iOS thread grouping is set on every
   notification kind rather than only completions.
+- Fixed: the Cloudflare provider ignored its injected `spawn` on the default
+  (free-tier) path; `ensureNgrokReady` hung on an stdin prompt in any
+  non-interactive context such as CI; and an upgrade socket's peer was not torn
+  down on close.
+- Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
+  `src/push/notification-handler.ts`.
+- Test suite grown to 447 tests with an enforced 85% coverage threshold
+  (`npx vitest run --coverage`).
 
 ### v1.2.x -> v1.3.10
 

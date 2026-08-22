@@ -179,7 +179,22 @@ agent:
 /**
  * Ensure ngrok is ready for use (diagnose + interactive setup if needed)
  */
-export async function ensureNgrokReady(): Promise<{ ready: boolean; authtoken: string | null }> {
+export interface EnsureNgrokReadyOptions {
+  /**
+   * Prompt on stdin for an authtoken when none is configured.
+   *
+   * Defaults to whether stdin is a TTY. Without this guard the prompt blocks
+   * forever in any non-interactive context -- CI, a piped stdin, a test -- and
+   * the caller never gets a result.
+   */
+  interactive?: boolean;
+}
+
+export async function ensureNgrokReady(
+  options: EnsureNgrokReadyOptions = {},
+): Promise<{ ready: boolean; authtoken: string | null }> {
+  const interactive = options.interactive ?? Boolean(process.stdin?.isTTY);
+
   console.log("\n[Diagnostics] Checking ngrok configuration...");
   
   const diagnostics = await diagnoseNgrok();
@@ -198,6 +213,13 @@ export async function ensureNgrokReady(): Promise<{ ready: boolean; authtoken: s
   }
 
   if (!diagnostics.authtokenConfigured || diagnostics.error) {
+    if (!interactive) {
+      console.log(
+        "[Setup] Ngrok authtoken not configured and stdin is not interactive; " +
+          "run `ngrok config add-authtoken YOUR_AUTHTOKEN` and retry.",
+      );
+      return { ready: false, authtoken: null };
+    }
     const authtoken = await setupNgrokWithUserInput();
     return { ready: !!authtoken, authtoken };
   }
@@ -369,7 +391,9 @@ export async function startNgrokTunnel(config: TunnelConfig): Promise<TunnelInfo
       
       console.log(`[Tunnel] Running: ngrok http ${config.port}`);
       
-      const { spawn } = require("child_process");
+      // Use the module's own import rather than an inline require: the
+      // top-level `spawn` was shadowed by this require and therefore dead, and
+      // a CommonJS require here is opaque to module mocking.
       const ngrokProcess = spawn("sh", ["-c", cmd], {
         stdio: ["ignore", "pipe", "pipe"],
       });

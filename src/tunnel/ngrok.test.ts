@@ -65,13 +65,24 @@ describe("ngrok provider", () => {
 
     it("should return object with ready and authtoken", async () => {
       const { ensureNgrokReady } = await import("./ngrok");
-      
-      const result = await ensureNgrokReady();
+
+      // Non-interactive: without this the authtoken prompt blocks on stdin and
+      // the call never resolves.
+      const result = await ensureNgrokReady({ interactive: false });
       
       expect(result).toHaveProperty("ready");
       expect(result).toHaveProperty("authtoken");
       expect(typeof result.ready).toBe("boolean");
       expect(result.authtoken === null || typeof result.authtoken === "string").toBe(true);
+    });
+
+    it("does not prompt when stdin is not interactive", async () => {
+      const { ensureNgrokReady } = await import("./ngrok");
+
+      // Resolving at all is the assertion: an interactive prompt would hang.
+      const result = await ensureNgrokReady({ interactive: false });
+
+      expect(result).toEqual({ ready: expect.any(Boolean), authtoken: result.authtoken });
     });
   });
 
