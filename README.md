@@ -2,7 +2,19 @@
 
 Mobile push notifications for OpenCode via Expo. Connect your phone to receive notifications when OpenCode generates responses, even when you're away from your computer.
 
-## Release Notes (v1.2.x -> v1.3.10)
+## Release Notes
+
+### Unreleased
+
+- **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
+  OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
+  See [Mobile web overlay](#mobile-web-overlay).
+- Notifications: the title now names the project instead of a constant, expanded
+  bodies keep the agent's line structure, errors get the same body budget and
+  expanded style as completions, and iOS thread grouping is set on every
+  notification kind rather than only completions.
+
+### v1.2.x -> v1.3.10
 
 - Added `update` command support: `npx opencode-mobile update` (with `--check` mode)
 - Installer now supports automation-friendly flags: `--yes`, `--provider`, `--skip-update-check`, and token/domain options
@@ -98,16 +110,120 @@ https://your-tunnel-url.ngrok.io
 ## How It Works
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────────┐
-│   OpenCode  │──────▶│   Tunnel     │──────▶│  Mobile Device  │
-│   Server    │      │  (ngrok/etc) │      │  (Push Notify)  │
-└─────────────┘      └──────────────┘      └─────────────────┘
+                          ┌──────────────────────────────┐
+┌────────────┐   ┌──────┐ │  plugin (127.0.0.1:4097)     │   ┌────────────┐
+│   Phone    │──▶│Tunnel│▶│  /push-token   local         │   │  OpenCode  │
+│  (browser  │   └──────┘ │  /tunnel       local         │   │   server   │
+│   or app)  │            │  /__oc-mobile  overlay assets │   │   :4096    │
+└────────────┘            │  /*            ──────────────┼──▶│            │
+                          └──────────────────────────────┘   └────────────┘
 ```
 
-1. **Tunnel**: Creates a secure public URL that your phone can reach
+1. **Tunnel**: Creates a secure public URL that your phone can reach. It points at
+   the plugin, which forwards everything to OpenCode.
 2. **QR Code**: Encodes the tunnel URL for easy scanning
 3. **Push Token**: Your phone registers its Expo push token with the plugin
 4. **Notifications**: OpenCode events trigger push notifications to your device
+5. **Overlay**: HTML responses get a mobile stylesheet and session switcher injected
+   on the way past. Everything else -- the REST API, the SSE event stream,
+   WebSocket upgrades -- is forwarded byte for byte.
+
+The tunnel client runs on your machine and dials loopback, so the plugin binds
+`127.0.0.1` only and is never exposed on your LAN.
+
+## Mobile web overlay
+
+If you browse to the tunnel URL on your phone, you get OpenCode's own web UI. It is
+a desktop-designed app: the session timeline has no viewport media queries, so file
+names and command lines truncate mid-word, prose renders at 14px, and code blocks
+squeeze rather than scroll.
+
+The plugin fixes that without forking OpenCode. Because the tunnel now points at the
+plugin, it can inject a mobile stylesheet into the HTML on its way to your phone.
+
+**What the overlay does**
+
+- Un-truncates the timeline slots that ellipsise file names, directories, tool
+  subtitles and patch targets, so you can read what the agent is doing
+- Raises prose to 16px with a comfortable line height
+- Makes code, diffs and tool output scroll horizontally in their own box instead of
+  wrapping (a wrapped diff loses its +/- alignment)
+- Restores the timeline scrollbar, so you can tell where you are in a long session
+- Enforces 44px touch targets on the accordion triggers
+- Hides the fixed 64px sidebar rail, which duplicates the drawer below 1280px
+- Pads the composer for the home indicator
+- Adds a **session switcher**: a horizontally scrolling strip of chips above the
+  timeline, one per session, coloured by state and sorted so anything needing you
+  comes first
+
+**Session states**
+
+| Colour | State | Meaning |
+|--------|-------|---------|
+| teal | working | A tool call is open |
+| copper | needs you | Blocked on a permission prompt; sorts first |
+| red | failed | The session errored |
+| grey | idle | Finished, waiting on you |
+
+These are the same four states the plugin's push notifications use.
+
+**Turning it off**
+
+```bash
+# transparent proxy: forward everything, inject nothing
+OPENCODE_MOBILE_OVERLAY=0 opencode serve
+
+# keep the stylesheet, drop the session switcher
+OPENCODE_MOBILE_OVERLAY_STRIP=0 opencode serve
+
+# treat wider screens as mobile too (e.g. an iPad in portrait)
+OPENCODE_MOBILE_OVERLAY_MAX_WIDTH=1024 opencode serve
+```
+
+**How the injection works**
+
+OpenCode serves its UI under a strict Content Security Policy. The overlay is built
+to fit inside it rather than around it:
+
+- `style-src 'self' 'unsafe-inline'` permits the injected `<link>`
+- `script-src 'self'` permits the injected `<script src>` because the plugin serves
+  it from the same origin
+
+The CSP header is forwarded verbatim -- it contains a hash of OpenCode's own
+theme-preload script, so recomputing it would break the page and dropping it would
+weaken it. Only `text/html` responses are ever buffered and rewritten; the event
+stream, API responses and WebSocket upgrades pass through untouched.
+
+The overlay's rules use `!important` deliberately. OpenCode's own rules are
+CSS-nested (so higher specificity than a flat selector) and its stylesheet is
+injected at runtime by the app bundle, so neither specificity nor document order
+would reliably win.
+
+The overlay targets `data-component` / `data-slot` attributes. If a future OpenCode
+release renames one, that rule stops applying -- it does not break the page.
+
+## Securing the tunnel
+
+**A tunnel publishes a server that can run shell commands in your working tree.**
+Anyone who learns the URL has your machine.
+
+OpenCode supports HTTP Basic auth, and warns on startup when it is not set:
+
+```
+Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.
+```
+
+Set it before exposing a tunnel:
+
+```bash
+export OPENCODE_SERVER_PASSWORD='a-long-random-string'
+opencode serve
+```
+
+The username defaults to `opencode` (override with `OPENCODE_SERVER_USERNAME`).
+Safari will prompt once and offer to save it in your Keychain. The plugin forwards
+the `Authorization` header unchanged, so the overlay, the assets and the proxied API
+are all covered by the same credential.
 
 ## Available Commands
 
@@ -132,6 +248,10 @@ https://your-tunnel-url.ngrok.io
 | `TUNNEL_PROVIDER` | Tunnel provider (`auto`, `ngrok`, `cloudflare`, `localtunnel`) | `auto` |
 | `OPENCODE_MOBILE_DEBUG` | Enable debug logging (`1` to enable) | disabled |
 | `OPENCODE_PORT` | Local server port | `3000` |
+| `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
+| `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` keeps the CSS, drops the script | enabled |
+| `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
+| `OPENCODE_SERVER_PASSWORD` | **OpenCode's own** HTTP Basic password. Not read by this plugin, but see [Securing the tunnel](#securing-the-tunnel) | unset |
 
 ### Tunnel Providers
 
@@ -211,6 +331,34 @@ npx opencode-mobile uninstall --yes
 npx opencode-mobile install
 ```
 
+### Overlay not appearing on the phone
+
+**Problem**: The page loads but still looks like the desktop UI
+
+**Solutions:**
+```bash
+# 1. Confirm the tunnel points at the plugin, not OpenCode directly.
+#    On startup the plugin logs its routes:
+#      [Push] /* -> OpenCode on port 4096 (HTML gets the overlay)
+
+# 2. Confirm the assets are reachable through the tunnel
+curl -sI https://your-tunnel-url/__oc-mobile/overlay.css | head -1   # expect 200
+curl -s  https://your-tunnel-url/ | grep oc-mobile-overlay          # expect the <link>
+
+# 3. The overlay only applies at or below the breakpoint (767px by default).
+#    On an iPad or in a wide window, raise it:
+OPENCODE_MOBILE_OVERLAY_MAX_WIDTH=1024 opencode serve
+```
+
+Hard-reload in Safari after an upgrade: the assets are revalidated rather than
+fingerprinted, so a suspended tab can hold an old copy.
+
+### Session switcher is missing
+
+The strip hides itself when there are fewer than two parent sessions -- one session
+is not a switcher. Child (sub-agent) sessions are excluded by design, matching how
+notifications treat them.
+
 ### Reset Everything
 
 ```bash
@@ -228,10 +376,12 @@ npx opencode-mobile install
 
 ```
 opencode-mobile/
-├── index.ts              # Main plugin entry point
+├── index.ts              # Main plugin entry point (server + routing)
 ├── src/
 │   ├── tunnel/          # Tunnel providers (ngrok, cloudflare, localtunnel)
 │   ├── push/            # Push notification logic
+│   ├── proxy/           # Reverse proxy to OpenCode + request routing
+│   ├── overlay/         # Mobile web overlay (CSS, session switcher, injection)
 │   └── cli/             # CLI commands (install, qr, audit, etc.)
 ├── bin/                 # CLI entry points
 ├── dist/                # Compiled output

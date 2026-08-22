@@ -3,7 +3,7 @@
  */
 
 import type { Notification, NotificationEvent, PluginContext } from "./types";
-import { truncate } from "./token-store";
+import { truncateMultiline } from "./token-store";
 import { loadFilterConfig, shouldFilterSession } from "./filters";
 
 const DEBUG_ENABLED = process.env.OPENCODE_MOBILE_DEBUG === "1";
@@ -150,6 +150,22 @@ function extractSessionTitle(properties: EventProperties): string | null {
   return trimmed ? trimmed : null;
 }
 
+/**
+ * The project a notification came from, as a short label.
+ *
+ * The title is the only line iOS guarantees is readable at a glance, so it
+ * should carry identity ("which of my sessions is this?") rather than a
+ * constant. The status goes in the subtitle instead.
+ */
+export function projectLabel(projectPath: string | null): string | null {
+  if (!projectPath) return null;
+  const trimmed = projectPath.replace(/[\\/]+$/, "");
+  if (!trimmed) return null;
+  const parts = trimmed.split(/[\\/]/);
+  const name = parts[parts.length - 1];
+  return name && name.trim() ? name.trim() : null;
+}
+
 function hasBracketTag(text: string): boolean {
   // Matches things like "[foo]" anywhere in the title.
   return /\[[^\]]+\]/.test(text);
@@ -218,6 +234,15 @@ export function formatNotification(
   }
 
   const baseData = { type, serverUrl, projectPath, sessionId };
+  const project = projectLabel(projectPath);
+
+  // Grouping applies to every notification kind, not just completions: errors
+  // and permission prompts belong in the same thread as the session that
+  // raised them, which is exactly when grouping matters most.
+  const iosThread = {
+    threadId: sessionId || undefined,
+    summaryArg: project || sessionTitleForFiltering || "Session",
+  };
 
   switch (type) {
     case "session.idle": {
@@ -230,14 +255,21 @@ export function formatNotification(
       );
 
       const sessionTitle = sessionTitleForFiltering || "Session";
+      const title = project || "Agent finished the task";
+      // The subtitle always carries the session title: with a project in the
+      // title it disambiguates which session, and without one it is the only
+      // identity the notification has.
+      const subtitle = sessionTitle;
+      // Collapsed preview is one line; the expanded body keeps the agent's
+      // own line structure.
       const bodyText = lastAssistantMessage
-        ? truncate(lastAssistantMessage, 200)
+        ? truncateMultiline(lastAssistantMessage, 320)
         : sessionTitle;
       const expandedText = lastAssistantMessage || sessionTitle;
 
       return {
-        title: "Agent finished the task",
-        subtitle: sessionTitle,
+        title,
+        subtitle,
         body: bodyText,
         data: {
           ...baseData,
@@ -250,38 +282,54 @@ export function formatNotification(
             style: {
               type: "bigtext" as const,
               text: expandedText,
-              title: "Agent finished the task",
+              title,
             },
           },
         },
-        ios: {
-          threadId: sessionId || undefined,
-          summaryArg: sessionTitle,
-        },
+        ios: iosThread,
       };
     }
-    case "session.error":
+    case "session.error": {
+      // An error is the one payload where the tail matters most, so it gets the
+      // same body budget and the same expanded style as a completion.
+      const errorText = String(
+        properties?.error || properties?.message || "An error occurred",
+      );
+      const sessionTitle = sessionTitleForFiltering || "Session";
       return {
-        title: "Session Error",
-        body: truncate(
-          String(properties?.error || properties?.message || "An error occurred"),
-          100,
-        ),
-        data: baseData,
+        title: project ? `${project} failed` : "Session Error",
+        subtitle: sessionTitle,
+        body: truncateMultiline(errorText, 320),
+        data: { ...baseData, error: errorText },
+        android: {
+          notification: {
+            channelId: "opencode-sessions",
+            style: {
+              type: "bigtext" as const,
+              text: errorText,
+              title: project ? `${project} failed` : "Session Error",
+            },
+          },
+        },
+        ios: iosThread,
       };
+    }
     case "permission.updated":
       return {
-        title: "Permission Required",
+        title: project ? `${project} needs you` : "Permission Required",
+        subtitle: sessionTitleForFiltering || undefined,
         body: `Approve ${properties?.tool || "action"} ${
           properties?.type || "execute"
         }?`,
         data: { ...baseData, permissionId: properties?.permissionId },
+        ios: iosThread,
       };
     case "permission.asked": {
       const patterns = Array.isArray(properties?.patterns) ? properties.patterns : [];
       const patternsLabel = patterns.length > 0 ? ` (${patterns.join(", ")})` : "";
       return {
-        title: "Permission Required",
+        title: project ? `${project} needs you` : "Permission Required",
+        subtitle: sessionTitleForFiltering || undefined,
         body: `Approve ${properties?.permission || "action"}${patternsLabel}?`,
         data: {
           ...baseData,
@@ -291,6 +339,7 @@ export function formatNotification(
         },
         // NOTE: Expo category identifiers cannot include ':' or '-'.
         categoryId: "opencode_permission",
+        ios: iosThread,
       };
     }
     default:

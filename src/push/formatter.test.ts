@@ -108,7 +108,9 @@ describe("formatNotification", () => {
 
     const notification = formatNotification(event, SERVER_URL);
     expect(notification).not.toBeNull();
-    expect(notification?.title).toBe("Permission Required");
+    // The title carries which project needs you; "Permission Required" is the
+    // fallback only when no project path could be resolved.
+    expect(notification?.title).toBe("project needs you");
     expect(notification?.body).toContain("Approve edit");
     expect(notification?.categoryId).toBe("opencode_permission");
     expect(notification?.data).toMatchObject({

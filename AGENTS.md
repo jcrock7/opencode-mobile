@@ -53,7 +53,17 @@ plugin/
 │   │   ├── formatter.ts  # Notification formatting
 │   │   ├── sender.ts     # Expo API sender
 │   │   └── notification-handler.ts  # Session notification (commented)
-│   └── proxy/            # Reverse proxy utilities
+│   ├── proxy/            # Reverse proxy to OpenCode
+│   │   ├── forward.ts    # Streaming proxy + HTML rewrite hook + upgrades
+│   │   ├── route.ts      # Pure request routing (pure -> testable)
+│   │   └── *.test.ts     # Integration tests against real http servers
+│   └── overlay/          # Mobile web overlay injected into OpenCode's UI
+│       ├── config.ts     # Env-driven config + asset route constants
+│       ├── inject.ts     # Pure HTML tag injection (idempotent)
+│       ├── mobile-css.ts # The injected stylesheet
+│       ├── mobile-js.ts  # The injected session switcher
+│       ├── serve.ts      # Asset serving (content types, ETag, 304)
+│       └── *.test.ts     # Unit tests (vitest)
 ├── vitest.config.ts      # Test configuration
 ├── tsconfig.json         # TypeScript config (strict mode, bundler)
 └── package.json          # Dependencies + scripts
@@ -290,6 +300,25 @@ signals.forEach((signal) => {
 7. **Tunnel Providers**: Support ngrok, cloudflare, localtunnel with fallback
 8. **Ngrok Multi-Strategy**: 4 fallback strategies if one fails
 9. **Serve Mode Gate**: Only start the LAN server + auto-tunnel when `process.argv` includes `serve`; do NOT infer serve mode from `ctx.serverUrl` (it can be present for `opencode debug wait`)
+10. **Tunnel Targets the Plugin**: The tunnel points at `pluginPort`, and the plugin
+    reverse-proxies to OpenCode. This is what lets it serve and inject the mobile
+    overlay. The plugin still binds `127.0.0.1` only -- the tunnel client is a local
+    process dialling loopback.
+11. **Only HTML is Buffered**: `src/proxy/forward.ts` streams every response except
+    `text/html`. Buffering the SSE stream at `/event` would stall the UI, so any
+    change there must keep the streaming path intact (see the SSE test in
+    `forward.test.ts`).
+12. **Forward the CSP Verbatim**: OpenCode's `content-security-policy` embeds a hash
+    of its own theme-preload script. Never recompute or drop it. The overlay is
+    designed to fit the existing policy (`style-src 'unsafe-inline'` for the
+    stylesheet, `script-src 'self'` for the same-origin script).
+13. **Segment-Aware Route Prefixes**: Use `matchesPrefix` in `src/proxy/route.ts`, not
+    `startsWith`. Now that the plugin fronts the whole OpenCode API, a raw
+    `startsWith("/tunnel")` would swallow real routes like `/tunnelling`.
+14. **Overlay Selectors are Best-Effort**: The overlay targets OpenCode's
+    `data-component` / `data-slot` attributes. If upstream renames one, the rule
+    stops applying -- acceptable. Never make the page's function depend on a rule
+    landing.
 
 ## Configuration
 
