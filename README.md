@@ -360,6 +360,7 @@ are all covered by the same credential.
 | `npx opencode-mobile install [options]` | Install plugin and `/mobile` command globally |
 | `npx opencode-mobile update [--check]` | Check for updates or install the latest version |
 | `npx opencode-mobile filters <status\|enable\|disable>` | Manage session notification filters |
+| `npm run doctor` | Diagnose why the overlay is not showing up |
 | `npm run print-config` | Print the global config to load this checkout as a plugin |
 | `npm run print-config -- --merge` | Write that config to `~/.config/opencode/` |
 | `/mobile` | Display QR code for mobile connection |
@@ -504,6 +505,25 @@ binary is unused either way.
 Install `cloudflared` itself with your system package manager (`brew install
 cloudflared`, or Cloudflare's apt/yum repo), not through npm.
 
+### Overlay not appearing: run the doctor first
+
+```bash
+npm run doctor
+```
+
+It walks the whole chain in order -- plugin registered, build current, OpenCode
+listening, plugin listening, overlay served and injected, tunnel pointing at the
+plugin rather than at OpenCode, public URL serving it -- and names the first
+thing that is wrong. It is read-only and prints no secrets.
+
+The three causes it most often finds:
+
+| Symptom | Cause |
+|---|---|
+| `only the upstream npm package is registered` | Your config still says `opencode-mobile@latest`. That package has no overlay. Fix with `npm run print-config -- --merge`. |
+| `nothing answering on 127.0.0.1:4097` | The plugin never started -- usually because OpenCode was launched without the `serve` subcommand. |
+| `tunnel points straight at OpenCode (4096), bypassing the plugin` | A tunnel you run yourself (or a systemd service, or a saved named tunnel) forwards to 4096. The plugin cannot move it; repoint it at 4097. |
+
 ### Overlay not appearing on the phone
 
 **Problem**: The page loads but still looks like the desktop UI
@@ -551,7 +571,7 @@ npx opencode-mobile install
 opencode-mobile/
 ├── index.ts              # Main plugin entry point (server + routing)
 ├── examples/            # Global OpenCode config to copy (see examples/README.md)
-├── scripts/             # print-global-config.mjs (npm run print-config)
+├── scripts/             # print-config and doctor helpers
 ├── src/
 │   ├── tunnel/          # Tunnel providers (ngrok, cloudflare, localtunnel)
 │   ├── push/            # Push notification logic
