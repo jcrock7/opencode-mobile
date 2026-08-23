@@ -184,6 +184,18 @@ export function buildOverlayCss(config: OverlayConfig): string {
     border-radius: 0 !important;
     padding-top: env(safe-area-inset-top, 0px) !important;
     padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    /* The container and its wrapper are plain divs that are ALWAYS rendered --
+       only the Kobalte content inside them mounts and unmounts. Upstream gets
+       away with 'pointer-events: auto' here because the container is a small
+       fixed box; at viewport size it would be an invisible full-screen click
+       shield over the whole app at z-index 50. So the click target moves to the
+       content, which is the part that actually comes and goes. */
+    pointer-events: none !important;
+  }
+  [data-component="dialog-v2"][data-size="x-large"] [data-slot="dialog-content"] {
+    pointer-events: auto !important;
+    width: 100% !important;
+    height: 100% !important;
   }
 
   /* The nav. 150px of a 393pt screen is most of the reason the content column

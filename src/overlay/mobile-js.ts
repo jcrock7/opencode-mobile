@@ -184,6 +184,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var statusEl = null;
   var changesBtn = null;
   var changesWatch = null;
+  // What renderChanges last wrote, so it can write nothing when nothing moved.
+  var changesSignature = "";
   var statusTick = null;
   // sessionId -> { tool, title, startedAt } for whatever that session is
   // running right now. Keyed by session rather than held as one global,
@@ -642,6 +644,13 @@ export function buildOverlayJs(config: OverlayConfig): string {
     }
 
     var showing = tabSelected(changes);
+    var label = /\\d+/.exec(changes.textContent || "");
+    // Write nothing when nothing changed. The DOM observer watches body for
+    // childList changes, so an unconditional rewrite here is a mutation that
+    // wakes the observer, which calls this again.
+    var signature = (showing ? "open" : "closed") + "|" + (label ? label[0] : "");
+    if (signature === changesSignature) return;
+    changesSignature = signature;
     changesBtn.setAttribute("data-oc-changes", showing ? "open" : "closed");
     changesBtn.setAttribute("aria-label", showing ? "Back to the session" : "Show changes");
     changesBtn.setAttribute("aria-pressed", showing ? "true" : "false");
@@ -651,11 +660,10 @@ export function buildOverlayJs(config: OverlayConfig): string {
     // The tab label carries the changed-file count when there is one. Reading
     // the digits out of it survives translation, where matching the words
     // would not.
-    var count = /\\d+/.exec(changes.textContent || "");
-    if (!showing && count) {
+    if (!showing && label) {
       var badge = document.createElement("span");
       badge.setAttribute("data-oc-changes-count", "");
-      badge.textContent = count[0];
+      badge.textContent = label[0];
       changesBtn.appendChild(badge);
     }
   }
@@ -700,6 +708,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   }
 
   function unmountChanges() {
+    changesSignature = "";
     if (changesWatch) { changesWatch.disconnect(); changesWatch = null; }
     if (changesBtn && changesBtn.parentNode) changesBtn.parentNode.removeChild(changesBtn);
     changesBtn = null;
@@ -881,15 +890,32 @@ export function buildOverlayJs(config: OverlayConfig): string {
     // The app is a SPA: navigating re-renders the timeline and can detach the
     // strip. Re-mount instead of vanishing on the first navigation.
     observer = new window.MutationObserver(function () {
-      if (!active()) return;
-      if (STRIP_ENABLED) {
-        if (!strip || !strip.isConnected) mount();
-        else render();
+      if (!observer) return;
+      // Everything below writes to the DOM, and those writes are childList
+      // mutations inside document.body -- which is what this observer watches.
+      // Left connected, the callback re-enters on its own output and never
+      // stops: the main thread pegs and every control on the page goes dead,
+      // including all of OpenCode's own. So: detach, do the work, discard the
+      // records our own writes queued, reattach.
+      observer.disconnect();
+      try {
+        if (active()) {
+          if (STRIP_ENABLED) {
+            if (!strip || !strip.isConnected) mount();
+            else render();
+          }
+          if (!statusEl || !statusEl.isConnected) mountStatus();
+          else renderStatus();
+          // The tab bar appears and disappears with the session route.
+          mountChanges();
+        }
+      } finally {
+        // stopWatchingDom() may have run inside the try.
+        if (observer) {
+          observer.takeRecords();
+          observer.observe(document.body, { childList: true, subtree: true });
+        }
       }
-      if (!statusEl || !statusEl.isConnected) mountStatus();
-      else renderStatus();
-      // The tab bar appears and disappears with the session route.
-      mountChanges();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }

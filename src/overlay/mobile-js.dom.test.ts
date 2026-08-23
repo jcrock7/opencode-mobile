@@ -886,6 +886,57 @@ describe("the changes button", () => {
     expect(h.changesButton()).toBeNull();
   });
 
+  it("does not spin the DOM observer with its own writes", async () => {
+    // The regression that broke every control on the page. The overlay watches
+    // document.body for childList changes to re-mount after SPA navigation.
+    // renderChanges() writes innerHTML, which IS a childList change in body --
+    // so the observer re-entered on its own output, forever, pegging the main
+    // thread. Nothing on the page answered a tap.
+    h = await harness({ changedFiles: 2 });
+
+    let writes = 0;
+    const spy = new (h.window as unknown as {
+      MutationObserver: typeof MutationObserver;
+    }).MutationObserver(() => {
+      writes += 1;
+    });
+    spy.observe(h.changesButton()!, { childList: true, subtree: true });
+
+    // One external mutation, of the kind SPA navigation produces.
+    const root = h.document.getElementById("root")!;
+    root.appendChild(h.document.createElement("div"));
+    await h.flush();
+    spy.disconnect();
+
+    // Settling costs a write or two; a loop costs hundreds.
+    expect(writes).toBeLessThan(5);
+  });
+
+  it("does not spin on the strip's or the status bar's writes either", async () => {
+    // Same shape, and they only escaped by luck: the strip rebuilds its chips
+    // and the status bar rewrites its text, both childList mutations in body.
+    // With two sessions and a busy one, all three renderers are live.
+    h = await harness({ statusMap: { ses_a: { type: "busy" }, ses_b: { type: "busy" } } });
+    h.emit(toolPart());
+    await h.flush();
+
+    let writes = 0;
+    const spy = new (h.window as unknown as {
+      MutationObserver: typeof MutationObserver;
+    }).MutationObserver((records) => {
+      writes += records.length;
+    });
+    spy.observe(h.document.getElementById("root")!, { childList: true, subtree: true });
+
+    h.document.getElementById("root")!.appendChild(h.document.createElement("div"));
+    await h.flush();
+    spy.disconnect();
+
+    expect(h.strip()).not.toBeNull();
+    expect(h.status()!.hidden).toBe(false);
+    expect(writes).toBeLessThan(20);
+  });
+
   it("does not mount when switched off", async () => {
     h = await harness({ config: { changesButton: false } });
     expect(h.changesButton()).toBeNull();

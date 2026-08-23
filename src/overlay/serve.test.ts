@@ -276,6 +276,20 @@ describe("overlay assets", () => {
       expect(css).toMatch(/\[data-slot="dialog-container"\]\s*\{[^}]*border-radius: 0 !important/);
     });
 
+    it("never makes the full-screen dialog container a click target", () => {
+      // The container and its wrapper are always in the DOM -- only the content
+      // inside them mounts and unmounts -- so a viewport-sized container with
+      // upstream's pointer-events: auto is an invisible full-screen click
+      // shield over the whole app.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-slot="dialog-container"\]\s*\{[^}]*pointer-events: none !important/,
+      );
+      expect(css).toMatch(
+        /\[data-slot="dialog-content"\]\s*\{[^}]*pointer-events: auto !important/,
+      );
+    });
+
     it("pads the settings dialog for the insets itself", () => {
       // It is portalled outside the app shell, so the padding the overlay puts
       // on #root never reaches it.
