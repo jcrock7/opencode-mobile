@@ -502,6 +502,20 @@ onto its own line below 640px upstream, so they only needed the touch target.
 
 ## Questions and permission requests
 
+**A request asked before you opened the phone.** This is the monitoring case,
+and the overlay missed it entirely: `attention` was only ever set from a live
+event, so anything the agent asked *before* the page loaded was invisible. Open
+the phone an hour after it asked and there was no sign of it -- the event had
+come and gone.
+
+It now fetches `GET /question` and `GET /permission` on load and on every
+refresh. Both return what is still pending across all sessions, which is exactly
+the gap, and upstream's own app does the same thing. Each is fetched
+independently so an older server missing one does not cost the other, and the
+list is rebuilt wholesale each time so a request answered elsewhere stops showing
+even if the reply event was missed too.
+
+
 These are the two events that **block**: the agent stops and waits for a human.
 They are also the two the phone most needs to hear about, and both were broken.
 

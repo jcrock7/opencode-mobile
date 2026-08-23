@@ -402,13 +402,19 @@ signals.forEach((signal) => {
     `permission.asked {permission, patterns}`. Check the schema before
     filtering on an event name; `permission.updated` was filtered on for months
     and exists in neither. Handle both generations rather than picking one.
-29. **Blocking Events Are Never Suppressed**: there are two -- a permission
+29. **Live Events Are Not A Substitute For Fetching State**: an event only
+    reaches a client that was connected when it fired. The overlay set
+    `attention` solely from `question.asked` / `permission.asked`, so anything
+    asked before the page loaded was invisible -- which is the entire
+    monitoring case. Fetch the pending list on load as well, and rebuild it
+    wholesale so a request answered elsewhere stops showing.
+30. **Blocking Events Are Never Suppressed**: there are two -- a permission
     request and a question -- and both stop the session until a human answers.
     The child-session filter exists because sub-agent completions are noise;
     these are the opposite, so suppressing one stalls the work silently. Any new
     "quiet by default" filter has to exempt both, and anything that reports
     "still working" has to treat them as not working.
-30. **A MutationObserver On `document.body` Must Not See Its Own Writes**: the
+31. **A MutationObserver On `document.body` Must Not See Its Own Writes**: the
     overlay watches body for `childList` to re-mount after SPA navigation, and
     every renderer it calls writes to the DOM -- which is a childList mutation
     in body. Left connected, the callback re-enters on its own output forever,
@@ -416,29 +422,29 @@ signals.forEach((signal) => {
     OpenCode's included. Disconnect, do the work, `takeRecords()` to discard
     what the writes queued, reconnect. Renderers should also be idempotent, so
     they queue nothing when nothing changed.
-31. **A Viewport-Sized Element Must Not Carry `pointer-events: auto`**: check
+32. **A Viewport-Sized Element Must Not Carry `pointer-events: auto`**: check
     what is always in the DOM before enlarging anything. `dialog-v2` and its
     container are plain divs that always render -- only the Kobalte content
     mounts and unmounts -- so sizing the container to the viewport turns it into
     an invisible full-screen click shield. Move the click target to the part
     that actually comes and goes.
-32. **`opencode serve` Loads No Plugins Until A Request Arrives**: it is declared
+33. **`opencode serve` Loads No Plugins Until A Request Arrives**: it is declared
     `instance: false` and resolves an instance per request, so nothing this
     plugin does -- the proxy, the tunnel, the banner -- happens at startup. Use
     `npm run serve`, which pokes the server once. Anything that assumes the
     plugin is up right after `opencode serve` returns is wrong.
-33. **Drive Upstream's Controls, Do Not Reimplement Them**: the Session /
+34. **Drive Upstream's Controls, Do Not Reimplement Them**: the Session /
     Changes switch is local component state in `session.tsx`, so the overlay
     clicks the real `[data-slot="tabs-trigger"][data-value="..."]` rather than
     trying to own the state. Hide such a control with `display: none` on its
     container, never remove it -- the triggers must stay in the DOM to be
     clickable.
-34. **Backslashes In `mobile-js.ts` Must Be Doubled**: the script lives in a
+35. **Backslashes In `mobile-js.ts` Must Be Doubled**: the script lives in a
     template literal. A *valid* escape (`\u`, `\n`) resolves at build time and
     is harmless; an *invalid* one (`\d`, `\s`, `\w`) silently loses its
     backslash. `/\d+/` shipped as `/d+/` and matched the "d" in "changed".
     Tests assert on the built asset, which is the only place this is visible.
-35. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+36. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

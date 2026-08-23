@@ -450,6 +450,57 @@ export function buildOverlayJs(config: OverlayConfig): string {
     return null;
   }
 
+  /**
+   * Pending questions and permission requests, fetched rather than awaited.
+   *
+   * 'attention' was only ever set from a live event, so anything asked BEFORE
+   * the page loaded was invisible -- which is the whole monitoring case. Open
+   * the phone an hour after the agent asked something and the overlay showed
+   * no sign of it, because the event had come and gone.
+   *
+   * 'GET /question' and 'GET /permission' both return what is still pending
+   * across every session, which is exactly the gap. Upstream's own app does the
+   * same on load; the overlay simply never did.
+   */
+  function normalizePending(raw) {
+    var list = null;
+    if (Array.isArray(raw)) list = raw;
+    else if (raw && Array.isArray(raw.data)) list = raw.data;
+    if (!list) return [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      if (!item || typeof item !== "object") continue;
+      var id = firstString(item.sessionID, item.sessionId);
+      if (id) out.push(id);
+    }
+    return out;
+  }
+
+  function refreshPending() {
+    // Each independently: an older server may not have both endpoints, and one
+    // missing must not cost us the other.
+    return Promise.all([
+      getJson("/question").then(normalizePending, function () { return null; }),
+      getJson("/permission").then(normalizePending, function () { return null; })
+    ]).then(function (results) {
+      var kinds = ["question", "permission"];
+      for (var k = 0; k < results.length; k++) {
+        var ids = results[k];
+        if (ids === null) continue;
+        // Rebuild this kind wholesale so an answered request stops showing.
+        var keys = Object.keys(attention);
+        for (var j = 0; j < keys.length; j++) {
+          if (attention[keys[j]] === kinds[k]) delete attention[keys[j]];
+        }
+        for (var i = 0; i < ids.length; i++) attention[ids[i]] = kinds[k];
+      }
+      render();
+      renderStatus();
+      renderDiag();
+    });
+  }
+
   function normalizeStatus(raw) {
     var next = Object.create(null);
     if (!raw || typeof raw !== "object") return next;
@@ -645,14 +696,27 @@ export function buildOverlayJs(config: OverlayConfig): string {
     return item.viaChild ? "sub-agent \u00b7 " + body : body;
   }
 
+  /**
+   * Hide the bar and reset its state.
+   *
+   * The state attribute drives the colour, so leaving the last one on a hidden
+   * element means a stale "attention" is what shows for an instant the next
+   * time the bar appears for some other reason.
+   */
+  function hideStatus() {
+    if (!statusEl) return;
+    statusEl.hidden = true;
+    statusEl.setAttribute("data-oc-state", "idle");
+    renderDiag();
+  }
+
   function renderStatus() {
     if (!statusEl) return;
 
     var route = routeParts();
     var id = route && route.current;
     if (!id) {
-      statusEl.hidden = true;
-      renderDiag();
+      hideStatus();
       return;
     }
 
@@ -683,8 +747,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (type !== "busy" && type !== "retry") {
       // Idle sessions get no bar: a permanent "idle" line is just a row of
       // wasted screen on a phone.
-      statusEl.hidden = true;
-      renderDiag();
+      hideStatus();
       return;
     }
 
@@ -865,6 +928,9 @@ export function buildOverlayJs(config: OverlayConfig): string {
   /* ---------- refresh ---------- */
 
   function refresh() {
+    // Pending requests are fetched alongside the list, not instead of it: they
+    // answer a different question and either can fail on its own.
+    refreshPending();
     return Promise.all([
       getJson("/session").then(normalizeSessions, function () { return null; }),
       getJson("/session/status").then(normalizeStatus, function () { return null; })

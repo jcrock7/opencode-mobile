@@ -50,6 +50,8 @@ interface Harness {
   rootHeight(): string;
   /** Every request the overlay made, with its headers. */
   fetched: Array<{ url: string; headers: Record<string, string> }>;
+  /** Override responses by URL. Return undefined to fall through, null for 404. */
+  setResponder(fn: (url: string) => unknown): void;
   /** The injected titlebar button, if it mounted. */
   changesButton(): HTMLElement | null;
   /** One of upstream's own tab triggers. */
@@ -86,6 +88,10 @@ async function harness(
     changedFiles?: number;
     /** Answer with data only for calls that name an instance, as OpenCode does. */
     requireContext?: boolean;
+    /** Pending question requests, as GET /question returns them. */
+    pendingQuestions?: Array<{ id: string; sessionID: string }>;
+    /** Pending permission requests, as GET /permission returns them. */
+    pendingPermissions?: Array<{ id: string; sessionID: string }>;
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
@@ -141,6 +147,10 @@ async function harness(
   const sessions = options.sessions ?? SESSIONS;
   const statusMap = options.statusMap ?? { ses_a: { type: "idle" }, ses_b: { type: "idle" } };
   const fetched: Array<{ url: string; headers: Record<string, string> }> = [];
+  // A mutable responder rather than a re-mockable fetch: the overlay wraps
+  // window.fetch to learn the app's addressing, so by the time a test runs the
+  // global is its wrapper, not this stub.
+  let responder: ((url: string) => unknown) | null = null;
   w.fetch = vi.fn((rawUrl: string, init?: { headers?: Record<string, string> }) => {
     // Real fetch stringifies whatever it is given; the stub must too, or a test
     // for odd input fails inside the stub rather than exercising the overlay.
@@ -153,7 +163,24 @@ async function harness(
       options.requireContext !== true ||
       url.includes("directory=") ||
       !!(init?.headers as Record<string, string> | undefined)?.["x-opencode-directory"];
-    const body = url.includes("/session/status") ? statusMap : sessions;
+    if (responder) {
+      const custom = responder(url);
+      if (custom !== undefined) {
+        const status = custom === null ? 404 : 200;
+        return Promise.resolve({
+          ok: status === 200,
+          status,
+          json: () => Promise.resolve(custom ?? {}),
+        });
+      }
+    }
+    const body = url.startsWith("/question")
+      ? (options.pendingQuestions ?? [])
+      : url.startsWith("/permission")
+        ? (options.pendingPermissions ?? [])
+        : url.includes("/session/status")
+          ? statusMap
+          : sessions;
     return Promise.resolve({
       ok: true,
       status: 200,
@@ -238,6 +265,10 @@ async function harness(
     rootHeight: () =>
       (doc.getElementById("root") as HTMLElement | null)?.style.getPropertyValue("height") ?? "",
     fetched,
+    /** Override responses by URL. Return undefined to fall through, null for 404. */
+    setResponder(fn: (url: string) => unknown) {
+      responder = fn;
+    },
     changesButton: () => doc.querySelector("[data-oc-changes]") as HTMLElement | null,
     trigger: (value: string) =>
       doc.querySelector(`[data-slot="tabs-trigger"][data-value="${value}"]`) as HTMLElement | null,
@@ -1245,5 +1276,86 @@ describe("addressing the API the way the app does", () => {
     const f = (h.window as unknown as { fetch: typeof fetch }).fetch;
     await expect(f(undefined as unknown as string)).resolves.toBeDefined();
     await expect(f({ weird: true } as unknown as string)).resolves.toBeDefined();
+  });
+});
+
+describe("a request that was already pending", () => {
+  // The monitoring case, and the one that was broken: `attention` was only ever
+  // set from a live event, so anything asked BEFORE the page loaded was
+  // invisible. Open the phone an hour after the agent asked something and the
+  // overlay showed no sign of it -- the event had come and gone.
+
+  it("shows a question asked before the page loaded", async () => {
+    h = await harness({
+      statusMap: { ses_a: { type: "idle" } },
+      pendingQuestions: [{ id: "que_1", sessionID: "ses_a" }],
+    });
+    await h.flush();
+
+    expect(h.statusState()).toBe("attention");
+    expect(h.statusText()).toBe("Waiting for your answer");
+  });
+
+  it("shows a permission asked before the page loaded", async () => {
+    h = await harness({
+      statusMap: { ses_a: { type: "idle" } },
+      pendingPermissions: [{ id: "per_1", sessionID: "ses_a" }],
+    });
+    await h.flush();
+
+    expect(h.statusText()).toBe("Waiting for you to approve");
+  });
+
+  it("marks the right chip when the request belongs to another session", async () => {
+    h = await harness({ pendingQuestions: [{ id: "que_1", sessionID: "ses_b" }] });
+    await h.flush();
+
+    const chip = Array.from(h.document.querySelectorAll("[data-oc-chip]")).find(
+      (el) => el.querySelector("[data-oc-chip-label]")?.textContent === "Fix tunnel",
+    ) as HTMLElement | undefined;
+    expect(chip?.getAttribute("data-oc-state")).toBe("attention");
+  });
+
+  it("clears a request that has since been answered", async () => {
+    // Rebuilt wholesale from each fetch, so an answered request stops showing
+    // even if the reply event was missed too.
+    h = await harness({ pendingQuestions: [{ id: "que_1", sessionID: "ses_a" }] });
+    await h.flush();
+    expect(h.statusState()).toBe("attention");
+
+    h.setResponder((url) =>
+      url.startsWith("/question") || url.startsWith("/permission") ? [] : undefined,
+    );
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    // session.updated schedules a debounced refresh; wait past the 400ms.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    // Hidden is the signal; the state attribute is reset with it so nothing
+    // stale can flash the next time the bar appears.
+    expect(h.status()!.hidden).toBe(true);
+    expect(h.statusState()).not.toBe("attention");
+  });
+
+  it("does not let one endpoint's failure cost the other", async () => {
+    // An older server may not have both.
+    h = await harness({ pendingPermissions: [{ id: "per_1", sessionID: "ses_a" }] });
+    // null means 404: this server has no /question endpoint.
+    h.setResponder((url) => (url.startsWith("/question") ? null : undefined));
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.statusText()).toBe("Waiting for you to approve");
+  });
+
+  it("tolerates a shape it does not recognise", async () => {
+    h = await harness();
+    h.setResponder((url) => (url.startsWith("/question") ? { nope: true } : undefined));
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.status()).not.toBeNull();
   });
 });
