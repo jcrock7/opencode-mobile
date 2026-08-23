@@ -58,6 +58,61 @@ export interface ForwardOptions {
 type OutgoingHeaders = Record<string, string | string[]>;
 
 /**
+ * Headers that belong to one hop and must not be relayed to the next.
+ *
+ * RFC 7230 6.1. This code copied every header verbatim in both directions,
+ * which on loopback is harmless -- there is no intermediary to confuse, and a
+ * local latency measurement shows no cost either way. Through Cloudflare there
+ * is one, and handing it a `connection` or `transfer-encoding` header that
+ * describes *our* link to OpenCode rather than its link to us is how a proxy
+ * chain ends up re-framing bodies, dropping keep-alive it should have kept, or
+ * buffering a stream that was meant to arrive event by event.
+ *
+ * `content-length` is deliberately absent: that one is end to end.
+ */
+const HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+/**
+ * Hop-by-hop headers for one message: the standard set, plus whatever this
+ * message's own `Connection` header names. A sender may extend the list, and a
+ * proxy that ignores that leaks a header the sender asked it not to relay.
+ */
+export function hopByHopFor(headers: http.IncomingHttpHeaders): Set<string> {
+  const named = new Set(HOP_BY_HOP);
+  const connection = headers["connection"];
+  const raw = Array.isArray(connection) ? connection.join(",") : connection;
+  if (typeof raw === "string") {
+    for (const token of raw.split(",")) {
+      const name = token.trim().toLowerCase();
+      // "close" and "keep-alive" are directives about the connection itself,
+      // not the names of other headers.
+      if (name && name !== "close" && name !== "keep-alive") named.add(name);
+    }
+  }
+  return named;
+}
+
+function copyEndToEnd(source: http.IncomingHttpHeaders): OutgoingHeaders {
+  const drop = hopByHopFor(source);
+  const headers: OutgoingHeaders = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (drop.has(key.toLowerCase())) continue;
+    headers[key] = value;
+  }
+  return headers;
+}
+
+/**
  * Copy request headers, dropping nothing but adding forwarding context.
  *
  * `accept-encoding` is stripped for document requests only: we may need to
@@ -78,11 +133,7 @@ export function buildRequestHeaders(
   stripEncoding: boolean,
   defaultDirectory?: string,
 ): OutgoingHeaders {
-  const headers: OutgoingHeaders = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue;
-    headers[key] = value;
-  }
+  const headers = copyEndToEnd(req.headers);
 
   if (stripEncoding) delete headers["accept-encoding"];
 
@@ -107,12 +158,7 @@ export function wantsHtml(req: http.IncomingMessage): boolean {
 }
 
 export function buildResponseHeaders(source: http.IncomingHttpHeaders): OutgoingHeaders {
-  const headers: OutgoingHeaders = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (value === undefined) continue;
-    headers[key] = value;
-  }
-  return headers;
+  return copyEndToEnd(source);
 }
 
 /**
@@ -235,6 +281,25 @@ export function forwardRequest(
  * Without this the app's socket-backed features would simply fail against the
  * proxy, because an upgrade is not an ordinary request/response pair.
  */
+/**
+ * Headers for an upgrade, which is the one case that needs the hop-by-hop set.
+ *
+ * `Connection: Upgrade` and `Upgrade: websocket` ARE the request -- stripping
+ * them the way an ordinary forward does would turn a handshake into a plain GET.
+ */
+export function upgradeRequestHeaders(
+  req: http.IncomingMessage,
+  defaultDirectory?: string,
+): OutgoingHeaders {
+  const headers = buildRequestHeaders(req, false, defaultDirectory);
+  for (const name of ["connection", "upgrade", "sec-websocket-key", "sec-websocket-version",
+    "sec-websocket-protocol", "sec-websocket-extensions"]) {
+    const value = req.headers[name];
+    if (value !== undefined) headers[name] = value;
+  }
+  return headers;
+}
+
 export function forwardUpgrade(
   req: http.IncomingMessage,
   clientSocket: Duplex,
@@ -246,7 +311,7 @@ export function forwardUpgrade(
     port: options.targetPort,
     path: req.url || "/",
     method: req.method,
-    headers: buildRequestHeaders(req, false, options.defaultDirectory),
+    headers: upgradeRequestHeaders(req, options.defaultDirectory),
   });
 
   proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {

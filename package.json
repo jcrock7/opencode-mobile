@@ -101,7 +101,8 @@
     "serve": "node scripts/serve.mjs",
     "print-config": "node scripts/print-global-config.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "preview": "npm run build --silent && node scripts/preview.mjs"
+    "preview": "npm run build --silent && node scripts/preview.mjs",
+    "latency": "npm run build --silent && node --no-warnings --loader ./scripts/preview/extensionless-loader.mjs scripts/latency.mjs"
   },
   "engines": {
     "node": ">=18"

@@ -9,6 +9,15 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
+- **`npm run latency`** measures what the proxy itself adds (0ms at p95 here),
+  and with `LATENCY_URL` measures the rest of the chain too. See
+  [When it feels slow](#when-it-feels-slow).
+- Fixed: the proxy relayed hop-by-hop headers (`connection`, `transfer-encoding`
+  and friends) verbatim in both directions, which is harmless on loopback and
+  wrong through Cloudflare. Upgrades keep theirs, since `Connection: Upgrade` is
+  the request.
+- The plugin's server now keeps idle connections for 75s rather than Node's 5s,
+  so cloudflared's pooled origin sockets are not closed underneath it.
 - **`npm run preview`** renders the overlay in headless Chromium at phone size,
   screenshots it and checks the geometry, so layout regressions are caught here
   rather than on someone's phone. See
@@ -48,7 +57,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 821 tests with an enforced 85% coverage threshold
+- Test suite grown to 835 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -559,6 +568,43 @@ not guessed, and the file says where each came from. That matters: a fixture tha
 invents markup is worse than no fixture, because it makes a wrong overlay look
 correct -- which is exactly how the double safe-area padding and the double
 bubble shipped.
+
+## When it feels slow
+
+```bash
+npm run latency                                    # what the proxy itself costs
+LATENCY_URL=https://your.tunnel npm run latency    # ...and what the rest of the chain costs
+```
+
+"It lags" has three possible owners -- the client app, the tunnel, or this
+plugin -- and only one of them is ours. `scripts/latency.mjs` stands a fake
+OpenCode up on loopback, drives its event stream and a reply POST both directly
+and through the real `forwardRequest`, and prints the difference. On this
+machine that difference is **0ms at p95 for both**, so steady-state proxying is
+not where time goes.
+
+Give it `LATENCY_URL` and it measures the same things through your public URL as
+well, which splits the chain into a number you can act on: if `GET /session` is
+40ms and the first `/event` arrives in 60ms, the plugin and the tunnel are fine
+and the delay is in the client or in what iOS is doing with it (ActivityKit
+throttles Live Activity updates, for one). If those numbers are seconds, it is
+the tunnel or the network.
+
+Two things the loopback measurement cannot see, both fixed rather than tuned
+blind, because both only misbehave through an intermediary:
+
+- **Hop-by-hop headers were relayed verbatim.** `connection`, `transfer-encoding`,
+  `keep-alive`, `te`, `trailer`, `upgrade` and anything a sender lists in its own
+  `Connection` header describe one link, not the next (RFC 7230 6.1). On loopback
+  there is no intermediary to confuse; through Cloudflare there is, and handing
+  it a `transfer-encoding` that describes *our* link to OpenCode is how a proxy
+  chain re-frames a body, drops keep-alive it should have kept, or buffers a
+  stream meant to arrive event by event. They are stripped now -- except on an
+  upgrade, where `Connection: Upgrade` *is* the request.
+- **`keepAliveTimeout` was Node's 5s default.** cloudflared pools its
+  connections to the origin, so a socket the origin quietly closed while the
+  pooler still believed in it costs a retry -- an occasional stall that reads as
+  the app lagging. Now 75s, with `headersTimeout` above it.
 
 ## The settings screen on a phone
 

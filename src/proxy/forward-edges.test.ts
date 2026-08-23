@@ -15,6 +15,8 @@ import {
   forwardUpgrade,
   buildRequestHeaders,
   buildResponseHeaders,
+  upgradeRequestHeaders,
+  hopByHopFor,
   wantsHtml,
   namesDirectory,
   MAX_HTML_BYTES,
@@ -88,6 +90,93 @@ beforeEach(() => {
 afterEach(async () => {
   await close(proxy);
   await close(upstream);
+});
+
+
+function req(headers: http.IncomingHttpHeaders): http.IncomingMessage {
+  return { headers, url: "/", method: "GET", socket: {} } as unknown as http.IncomingMessage;
+}
+
+describe("hop-by-hop headers", () => {
+  // RFC 7230 6.1. Copying these verbatim is harmless on loopback -- there is no
+  // intermediary to confuse, and a local latency measurement shows no cost
+  // either way -- but through Cloudflare there is one, and handing it a
+  // `connection` or `transfer-encoding` describing OUR link to OpenCode rather
+  // than its link to us is how a proxy chain re-frames bodies, drops keep-alive
+  // it should have kept, or buffers a stream meant to arrive event by event.
+
+  it.each([
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ])("drops %s from a forwarded request", (name) => {
+    const headers = buildRequestHeaders(req({ [name]: "something", accept: "application/json" }), false);
+    expect(headers[name]).toBeUndefined();
+    expect(headers.accept).toBe("application/json");
+  });
+
+  it("drops them from the response too", () => {
+    const headers = buildResponseHeaders({
+      "transfer-encoding": "chunked",
+      connection: "keep-alive",
+      "content-type": "text/event-stream",
+      "content-length": "12",
+    });
+    expect(headers["transfer-encoding"]).toBeUndefined();
+    expect(headers.connection).toBeUndefined();
+    expect(headers["content-type"]).toBe("text/event-stream");
+    // End to end, not hop by hop: dropping it would break every ranged fetch.
+    expect(headers["content-length"]).toBe("12");
+  });
+
+  it("honours extra names the sender listed in Connection", () => {
+    // A sender may extend the set, and a proxy that ignores that relays a
+    // header it was explicitly asked not to.
+    const headers = buildRequestHeaders(
+      req({ connection: "keep-alive, X-Private", "x-private": "secret", accept: "*/*" }),
+      false,
+    );
+    expect(headers["x-private"]).toBeUndefined();
+    expect(headers.accept).toBe("*/*");
+  });
+
+  it("exposes the set it computed, so a caller can reason about it", () => {
+    expect(hopByHopFor({}).has("transfer-encoding")).toBe(true);
+    expect(hopByHopFor({}).has("content-length")).toBe(false);
+    expect(hopByHopFor({ connection: "X-Thing" }).has("x-thing")).toBe(true);
+  });
+
+  it("does not read close or keep-alive as header names", () => {
+    const headers = buildResponseHeaders({ connection: "close", "content-type": "application/json" });
+    expect(headers["content-type"]).toBe("application/json");
+  });
+
+  it("keeps the handshake headers on an upgrade, which needs them", () => {
+    // Connection: Upgrade IS the request there; stripping it the way an
+    // ordinary forward does turns a handshake into a plain GET.
+    const headers = upgradeRequestHeaders(
+      req({
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-key": "abc",
+        "sec-websocket-version": "13",
+      }),
+    );
+    expect(headers.connection).toBe("Upgrade");
+    expect(headers.upgrade).toBe("websocket");
+    expect(headers["sec-websocket-key"]).toBe("abc");
+    expect(headers["sec-websocket-version"]).toBe("13");
+  });
+
+  it("still applies the directory default on an upgrade", () => {
+    const headers = upgradeRequestHeaders(req({ upgrade: "websocket" }), "/home/jared/repo");
+    expect(headers["x-opencode-directory"]).toBe("/home/jared/repo");
+  });
 });
 
 describe("constants and header helpers", () => {

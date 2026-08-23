@@ -837,6 +837,16 @@ async function startServer(
       forwardUpgrade(clientReq, clientSocket, head, forwardOptions);
     });
 
+    // Node closes an idle keep-alive connection after 5s. That is short for an
+    // origin sitting behind something that pools connections to it -- cloudflared
+    // reuses its origin sockets, and a socket the origin closed while the proxy
+    // still believed in it costs a retry: an occasional stall or 502 that looks
+    // like the app lagging. Longer than the pooler's own idle timeout is the
+    // rule, and headersTimeout has to stay above keepAliveTimeout or Node will
+    // close connections it just agreed to keep.
+    httpServer.keepAliveTimeout = 75_000;
+    httpServer.headersTimeout = 80_000;
+
     httpServer.on("error", (err: any) => {
       if (err.code === "EADDRINUSE") {
         debugLog("[Push] Port in use, skipping");

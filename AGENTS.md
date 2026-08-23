@@ -539,6 +539,22 @@ signals.forEach((signal) => {
     it. Record the request id the first time upstream is seen showing it and
     never render ours for that id; clear the note when the request leaves the
     pending list, so the map tracks state rather than growing.
+49. **Strip Hop-By-Hop Headers, Except On An Upgrade**: `connection`,
+    `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`,
+    `transfer-encoding`, `upgrade`, plus anything the sender named in its own
+    `Connection` (RFC 7230 6.1). Relaying them is invisible on loopback -- there
+    is no intermediary and `npm run latency` shows no cost -- and wrong through
+    Cloudflare, where a `transfer-encoding` describing our link to OpenCode can
+    make the chain re-frame a body or buffer a stream. `content-length` is end
+    to end and stays. The upgrade path is the exception: those headers ARE the
+    handshake.
+50. **Measure Before Tuning A Proxy**: `npm run latency` drives a fake OpenCode
+    directly and through the real `forwardRequest` and prints the delta (0ms at
+    p95). With `LATENCY_URL` it measures the public URL too. Node's defaults
+    already give `noDelay: true` both sides and `maxSockets: Infinity`, so Nagle
+    and socket starvation are not the answer -- check before "fixing" either.
+    `keepAliveTimeout` IS worth raising (5s default, 75s now) because a pooling
+    intermediary keeps origin sockets longer than that.
 
 ## Configuration
 
