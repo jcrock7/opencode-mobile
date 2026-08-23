@@ -277,11 +277,34 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
 - Makes code, diffs and tool output scroll horizontally in their own box instead of
   wrapping (a wrapped diff loses its +/- alignment)
 - Restores the timeline scrollbar, so you can tell where you are in a long session
-- Enforces 44px touch targets on the accordion triggers
-- Pads the composer for the home indicator
+- Adds a **now-running status bar** pinned above the composer, saying what the
+  agent is doing at this moment: the tool, its title, and how long it has been
+  going. Copper when a permission is waiting on you, red when the session failed,
+  gone when it is idle. This is the one thing a phone screen cannot otherwise tell
+  you without scrolling to hunt for the live tool row.
 - Adds a **session switcher**: a horizontally scrolling strip of chips above the
   timeline, one per session, coloured by state and sorted so anything needing you
   comes first
+- **Handles PWA safe areas.** Installed to the Home Screen the page runs with no
+  browser chrome, and OpenCode asks for a translucent status bar with
+  `viewport-fit=cover` -- so the document extends *under* the notch and the home
+  indicator. Upstream only pads for that in its newer layout, so the overlay pads
+  the app shell itself.
+- Enforces 44pt hit areas on the chrome controls, which are built for a mouse
+- Contains overscroll to the timeline, so it stops rubber-banding the whole page
+- Removes the tap-highlight flash and text cursor from chrome, while keeping
+  prose, code and diffs selectable -- copying a path out of a session is the point
+- Trims titlebar and tab padding, which on a 390x844 screen were part of a chrome
+  stack eating roughly a third of the height before any content appeared
+
+**Where the status bar gets its facts**
+
+`message.part.updated` on the SSE stream carries the tool part: its `tool` name,
+`state.status`, `state.title` and `state.time.start`. That is the only event that
+says *what* is running rather than merely that something is -- `/session/status`
+gives only busy/idle/retry -- so the bar reads it and shows e.g. `bash · npm test`
+with a counter from the tool's own start time. It shares the single `EventSource`
+the session strip already opens rather than adding a second.
 
 **Session states**
 
@@ -387,7 +410,8 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_DEBUG` | Enable debug logging (`1` to enable) | disabled |
 | `OPENCODE_PORT` | Local server port | `3000` |
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
-| `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` keeps the CSS, drops the script | enabled |
+| `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
+| `OPENCODE_MOBILE_OVERLAY_STATUS` | "Now running" status bar. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
 | `OPENCODE_MOBILE_OVERLAY_DEBUG` | `1` shows a badge on the page proving the overlay is applied | off |
 | `OPENCODE_SERVER_PASSWORD` | **OpenCode's own** HTTP Basic password. Not read by this plugin, but see [Securing the tunnel](#securing-the-tunnel) | unset |
