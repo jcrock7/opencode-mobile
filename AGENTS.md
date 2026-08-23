@@ -450,6 +450,27 @@ signals.forEach((signal) => {
     CSS unit does. Anything that pins the shell must apply solely while
     installed and at phone widths, and must hand the height back when the
     keyboard closes.
+37. **A Pending Question Exists Only In The Process That Asked It**: `Question.Service`
+    holds requests in an in-memory `Map` inside `InstanceState`, blocked on a
+    `Deferred` (`packages/opencode/src/question/index.ts`); permissions are the
+    same. Nothing is written to storage. Sessions and messages *are* -- files
+    under OpenCode's data directory -- so a second server process reading the
+    same directory shows the session and its transcript while being unable to
+    see the question. Before treating an empty `GET /question` as a bug, check
+    whether the agent is running under the same server the phone is proxied to.
+38. **Answering Is Two Endpoints, And They Are The Only Writes**: `POST
+    /question/<id>/reply` takes `{answers: string[][]}` -- one array of chosen
+    labels per question, in order -- `/reject` takes no body, and `POST
+    /permission/<id>/reply` takes `{reply: "once" | "always" | "reject"}`. The
+    overlay is otherwise read-only, and `serve.test.ts` asserts on the built
+    asset that these four routes are the entire write surface. Widening it is a
+    deliberate act, not a side effect.
+39. **Render Nothing Where Upstream Already Renders Something**: the ask dock
+    checks for `[data-component="session-question-dock"]` and
+    `session-permission-dock` and stands down when either is present. Same rule
+    as #26 (the double bubble) but for a whole feature rather than a style: the
+    overlay's job is to fill a gap, and two docks for one request is worse than
+    none.
 
 ## Configuration
 

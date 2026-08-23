@@ -21,6 +21,7 @@ const DEFAULT_CONFIG: OverlayConfig = {
   keyboardViewport: true,
   bubbles: true,
   changesButton: true,
+  askDock: true,
   maxWidth: DEFAULT_MAX_WIDTH,
   debug: false,
 };
@@ -60,6 +61,7 @@ export function loadOverlayConfig(env: NodeJS.ProcessEnv = process.env): Overlay
     keyboardViewport: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_KEYBOARD),
     bubbles: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_BUBBLES),
     changesButton: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_CHANGES),
+    askDock: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_ASK),
     maxWidth: maxWidth ?? DEFAULT_CONFIG.maxWidth,
     debug: isEnabled(env.OPENCODE_MOBILE_OVERLAY_DEBUG),
   };

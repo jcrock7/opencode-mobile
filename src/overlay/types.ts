@@ -55,6 +55,21 @@ export interface OverlayConfig {
    * there, and toggles back with the same tap.
    */
   changesButton: boolean;
+  /**
+   * Answer the agent's questions and permission requests from the phone.
+   *
+   * A question or a permission request is held in an in-memory map inside the
+   * server process that asked it, and answering one is two API calls:
+   * `POST /question/<id>/reply` with the chosen labels, or
+   * `POST /permission/<id>/reply` with once/always/reject. Upstream's own dock
+   * does not reach the phone in this setup, and the overlay already knows the
+   * addressing, so it can ask and answer directly rather than wait for a UI
+   * that never arrives.
+   *
+   * Renders nothing when upstream's dock IS present, so the two can never
+   * stack.
+   */
+  askDock: boolean;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
   /**

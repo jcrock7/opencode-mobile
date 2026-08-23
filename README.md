@@ -9,6 +9,10 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
+- **Answer questions and permission requests from the phone.** The overlay
+  renders the pending request as a bottom sheet and POSTs the reply itself,
+  rather than waiting for upstream's dock to appear. See
+  [Answering from the phone](#answering-from-the-phone).
 - Notifications: the title now names the project instead of a constant, expanded
   bodies keep the agent's line structure, errors get the same body budget and
   expanded style as completions, and iOS thread grouping is set on every
@@ -19,7 +23,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 672 tests with an enforced 85% coverage threshold
+- Test suite grown to 769 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -538,13 +542,54 @@ even when the on-screen dock does not appear:
 | Permission pending | amber, "Waiting for you to approve" |
 | Question pending | amber, "Waiting for your answer" |
 
-**The on-screen dock is upstream's, not this plugin's.** The web UI renders both
-docks from OpenCode's own synced state -- it bootstraps pending questions and
-permissions on load and follows the live events, symmetrically. Everything it
-needs is there, so if a dock does not appear on the phone while the status bar
-does turn amber, the events are arriving and the fault is in the app's rendering
-or its auto-accept filter, not in the transport. That split is the fastest way to
-tell the two apart.
+### Answering from the phone
+
+A signal you cannot act on just sends you to find a laptop, so the overlay now
+renders the request itself and answers it.
+
+Upstream draws its own dock for both kinds (`session-question-dock` and
+`session-permission-dock`), and on some setups it does not reach the phone. Two
+API calls answer either kind, and the overlay already knows how to address the
+API, so it does not need the dock:
+
+```
+POST /question/<id>/reply     { "answers": [["Cascade"], ...] }
+POST /question/<id>/reject
+POST /permission/<id>/reply   { "reply": "once" | "always" | "reject" }
+```
+
+The dock is a fixed sheet at the foot of the screen with the question text, its
+options as 52px rows, and Back/Next across a multi-question request. A
+permission request gets its patterns and three buttons: Reject, Always, Allow
+once. A sub-agent's request opens on the parent you have open, for the same
+reason its running tool shows there: the child id means nothing to you.
+
+Two things it deliberately does not do. It renders **nothing** when upstream's
+own dock is on the page -- two docks for one request is worse than none, which
+is the lesson from the double bubble. And it does not take a typed answer; the
+options work, and it says so rather than leaving you hunting for a field.
+
+`OPENCODE_MOBILE_OVERLAY_ASK=0` switches the dock off and leaves the status bar
+signal in place.
+
+### If the dock is empty but something is clearly waiting
+
+A pending question lives in an **in-memory map inside the process that asked
+it**, blocked on a deferred (`packages/opencode/src/question/index.ts`). It is
+never written to storage. Sessions and messages *are* -- they are files under
+OpenCode's data directory -- so a second server process reading the same
+directory shows you the session and its transcript while being structurally
+unable to see the question.
+
+That is worth knowing because it looks exactly like a bug in this plugin. If the
+agent is running under a *different* server process than the one the phone is
+proxied to -- a desktop app with its own sidecar, say, alongside your own
+`opencode serve` -- then `GET /question` on the phone's server correctly returns
+`[]`, upstream's dock correctly renders nothing, and no client of that server can
+answer the request. `OPENCODE_MOBILE_OVERLAY_DEBUG=1` tells you which case you
+are in: the readout's `pend q<code>:<n>` field is the HTTP status and the count,
+so `q200:0` while the desktop shows a question means the request is somewhere
+this server cannot see, and `q200:1` with no dock is ours to fix.
 
 ## Permission requests
 
@@ -784,6 +829,7 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STATUS` | "Now running" status bar. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_CHANGES` | Replace the Session / Changes tab bar with a button in the titlebar. `0` restores the tab bar | enabled |
+| `OPENCODE_MOBILE_OVERLAY_ASK` | Answer questions and permission requests from the phone. `0` leaves only the status-bar signal | enabled |
 | `OPENCODE_MOBILE_OVERLAY_BUBBLES` | Three visual tiers in the transcript: your message as a bubble, the response railed, tool rows demoted. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_KEYBOARD` | Pin the shell to the visual viewport so the keyboard cannot push the layout off screen. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
@@ -1022,7 +1068,7 @@ reporting every gate between "the script is running" and "the feature is on
 screen":
 
 ```
-route ses_abc123 | sess 2 | list 200 | sse open/47 message.part.updated | st busy | att - | bar shown
+route ses_abc123 | sess 2 | list 200/200 | sse open/47 message.part.updated | st busy | att - | pend q200:0 p200:0 | bar shown
 ```
 
 | Field | Means | If it reads |
@@ -1033,7 +1079,8 @@ route ses_abc123 | sess 2 | list 200 | sse open/47 message.part.updated | st bus
 | `list` | HTTP status of `GET /session` and of `/session/status` | either not `200` -- that endpoint is refusing it. They are routed differently upstream (`GET /session` is answered locally, `/session/status` is forwarded) so they can fail independently |
 | `sse` | event-stream state / events received / last type | `error/0` or `open/0` -- no events are arriving, so nothing live can work |
 | `st` | the status map entry for this session | `-` while the session is clearly working -- `GET /session/status` is not answering for this instance |
-| `att` | a pending permission or question | `-` while the PC is showing a prompt -- the blocking event is not reaching this client |
+| `att` | a pending permission or question | `-` while the PC is showing a prompt -- neither a live event nor the pending fetch found it |
+| `pend` | HTTP status and count from `GET /question` and `GET /permission` | `q200:0` while the PC is showing a question -- this server is not the one holding it (see "If the dock is empty but something is clearly waiting"). `q404:-` -- an older server without the endpoint |
 | `bar` | whether the status bar element is mounted and visible | `unmounted` -- no anchor was found to mount it against |
 
 That line distinguishes the failures that look identical from outside. It is the

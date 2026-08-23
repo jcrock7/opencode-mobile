@@ -30,6 +30,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var STATUS_ENABLED = ${config.statusBar ? "true" : "false"};
   var KEYBOARD_ENABLED = ${config.keyboardViewport ? "true" : "false"};
   var CHANGES_ENABLED = ${config.changesButton ? "true" : "false"};
+  var ASK_ENABLED = ${config.askDock ? "true" : "false"};
   var DEBUG = ${config.debug ? "true" : "false"};
   if (typeof window === "undefined" || !window.document) return;
 
@@ -165,7 +166,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     schedule();
   }
 
-  if (!STRIP_ENABLED && !STATUS_ENABLED && !KEYBOARD_ENABLED && !CHANGES_ENABLED) return;
+  if (!STRIP_ENABLED && !STATUS_ENABLED && !KEYBOARD_ENABLED && !CHANGES_ENABLED && !ASK_ENABLED) return;
 
   var REFRESH_MS = 20000;
   var RETRY_BASE_MS = 1000;
@@ -175,6 +176,11 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   var sessions = [];
   var status = Object.create(null);
+  // Which sessions are blocked on a person, and on what: "question" or
+  // "permission". A live event marks one immediately; the fetch that follows is
+  // authoritative, so a request answered elsewhere stops showing even when its
+  // reply event never reached us. The two agree in practice because a server
+  // adds the request to its pending map before publishing the event.
   var attention = Object.create(null);
   var errored = Object.create(null);
   // childId -> parentId, for every child session the list reported.
@@ -186,6 +192,17 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var changesWatch = null;
   // What renderChanges last wrote, so it can write nothing when nothing moved.
   var changesSignature = "";
+  var askEl = null;
+  // The pending requests themselves, not just which sessions have one: the
+  // dock has to render the question text and its options.
+  var pendingQuestions = [];
+  var pendingPermissions = [];
+  // Which request the dock is showing, and the answers picked so far.
+  var askId = "";
+  var askTab = 0;
+  var askAnswers = [];
+  var askSending = false;
+  var askSignature = "";
   var statusTick = null;
   // sessionId -> { tool, title, startedAt } for whatever that session is
   // running right now. Keyed by session rather than held as one global,
@@ -209,6 +226,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var diagStreamState = "init";
   var diagEvents = 0;
   var diagLastEvent = "-";
+  var diagPendQ = "-";
+  var diagPendP = "-";
 
   /* ---------- api ---------- */
 
@@ -326,6 +345,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       " | sse " + diagStreamState + "/" + diagEvents + " " + diagLastEvent +
       " | st " + (id && status[id] ? status[id] : "-") +
       " | att " + (id && attention[id] ? attention[id] : "-") +
+      " | pend q" + diagPendQ + " p" + diagPendP +
       " | bar " + (statusEl ? (statusEl.hidden ? "hidden" : "shown") : "unmounted") +
       " | ctx " + (apiLearned ? (apiSearch || "hdr") : "none");
     if (line === diagLast) return;
@@ -351,6 +371,21 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (path === "/session/status") diagStatusCode = String(res.status);
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json();
+    });
+  }
+
+  function postJson(path, body) {
+    var headers = { accept: "application/json", "content-type": "application/json" };
+    if (apiDirectory) headers["x-opencode-directory"] = apiDirectory;
+    return fetch(apiUrl(path), {
+      method: "POST",
+      headers: headers,
+      credentials: "same-origin",
+      cache: "no-store",
+      body: JSON.stringify(body || {})
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res;
     });
   }
 
@@ -471,32 +506,61 @@ export function buildOverlayJs(config: OverlayConfig): string {
     for (var i = 0; i < list.length; i++) {
       var item = list[i];
       if (!item || typeof item !== "object") continue;
-      var id = firstString(item.sessionID, item.sessionId);
-      if (id) out.push(id);
+      var sessionID = firstString(item.sessionID, item.sessionId);
+      var id = firstString(item.id, item.requestID, item.requestId);
+      if (!sessionID || !id) continue;
+      out.push({ id: id, sessionID: sessionID, request: item });
     }
     return out;
+  }
+
+  /**
+   * Fetch one pending endpoint, recording its HTTP status for the readout.
+   *
+   * The status is worth as much as the list here. A pending question that is
+   * held in another process is indistinguishable from one that does not exist
+   * -- both are 200 with an empty array -- and only the code tells that apart
+   * from a route that is missing or refusing us.
+   */
+  function getPending(path, sink) {
+    return getJson(path).then(
+      function (raw) {
+        var list = normalizePending(raw);
+        sink(String(200) + ":" + list.length);
+        return list;
+      },
+      function (err) {
+        var code = /[0-9]{3}/.exec(String(err && err.message));
+        sink((code ? code[0] : "err") + ":-");
+        return null;
+      }
+    );
   }
 
   function refreshPending() {
     // Each independently: an older server may not have both endpoints, and one
     // missing must not cost us the other.
     return Promise.all([
-      getJson("/question").then(normalizePending, function () { return null; }),
-      getJson("/permission").then(normalizePending, function () { return null; })
+      getPending("/question", function (v) { diagPendQ = v; }),
+      getPending("/permission", function (v) { diagPendP = v; })
     ]).then(function (results) {
       var kinds = ["question", "permission"];
       for (var k = 0; k < results.length; k++) {
-        var ids = results[k];
-        if (ids === null) continue;
-        // Rebuild this kind wholesale so an answered request stops showing.
+        var items = results[k];
+        if (items === null) continue;
+        if (k === 0) pendingQuestions = items;
+        else pendingPermissions = items;
+        // Rebuild this kind wholesale so a request answered elsewhere stops
+        // showing even if we never saw its reply event.
         var keys = Object.keys(attention);
         for (var j = 0; j < keys.length; j++) {
           if (attention[keys[j]] === kinds[k]) delete attention[keys[j]];
         }
-        for (var i = 0; i < ids.length; i++) attention[ids[i]] = kinds[k];
+        for (var i = 0; i < items.length; i++) attention[items[i].sessionID] = kinds[k];
       }
       render();
       renderStatus();
+      renderAsk();
       renderDiag();
     });
   }
@@ -925,6 +989,332 @@ export function buildOverlayJs(config: OverlayConfig): string {
     changesBtn = null;
   }
 
+  /* ---------- the ask dock ----------
+
+     Answering the agent from the phone.
+
+     A question and a permission request are the same shape of problem: the
+     agent has stopped and is blocked on a person, and until that person
+     answers, nothing moves. The status bar says so, which is worth having, but
+     a notification you cannot act on is a notification that makes you go and
+     find a laptop.
+
+     Upstream draws its own dock for both, and on this setup it does not reach
+     the phone. Rather than keep guessing at someone else's Solid tree, the
+     overlay asks the API directly -- it already learned how to address it --
+     and renders the request itself. Two POSTs answer either kind:
+
+       POST /question/<id>/reply    { answers: [[label, ...], ...] }
+       POST /permission/<id>/reply  { reply: "once" | "always" | "reject" }
+
+     If upstream's dock IS on the page, this renders nothing. Two docks for one
+     request is worse than none: the same lesson as the double bubble. */
+
+  function upstreamDock() {
+    return document.querySelector(
+      '[data-component="session-question-dock"],[data-component="session-permission-dock"]'
+    );
+  }
+
+  /** Pending requests belonging to 'id' or to one of its sub-agents. */
+  function pendingFor(list, id) {
+    var out = [];
+    if (!id) return out;
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      if (item.sessionID === id || parentOf[item.sessionID] === id) out.push(item);
+    }
+    return out;
+  }
+
+  /**
+   * The one request the dock should show: whatever is blocking the session on
+   * screen. Questions first -- a question is always the agent waiting on a
+   * decision, where a permission request can sometimes be answered by a rule.
+   */
+  function askFor() {
+    var route = routeParts();
+    var id = (route && route.current) || "";
+    if (!id) return null;
+    var questions = pendingFor(pendingQuestions, id);
+    if (questions.length) return { kind: "question", item: questions[0] };
+    var permissions = pendingFor(pendingPermissions, id);
+    if (permissions.length) return { kind: "permission", item: permissions[0] };
+    return null;
+  }
+
+  function askQuestions(item) {
+    var list = item && item.request && item.request.questions;
+    return Array.isArray(list) ? list : [];
+  }
+
+  /** Reset the picked answers when the dock moves to a different request. */
+  function askReset(id, count) {
+    askId = id;
+    askTab = 0;
+    askAnswers = [];
+    for (var i = 0; i < count; i++) askAnswers.push([]);
+  }
+
+  function askPicked(label) {
+    var current = askAnswers[askTab] || [];
+    return current.indexOf(label) !== -1;
+  }
+
+  function askPick(label, multiple) {
+    var current = askAnswers[askTab] || [];
+    if (!multiple) {
+      askAnswers[askTab] = [label];
+      renderAsk();
+      return;
+    }
+    var at = current.indexOf(label);
+    if (at === -1) current.push(label);
+    else current.splice(at, 1);
+    askAnswers[askTab] = current;
+    renderAsk();
+  }
+
+  function askDone() {
+    askSending = false;
+    askId = "";
+    askTab = 0;
+    askAnswers = [];
+    askSignature = "";
+    // The reply event may or may not reach us; refetching is what actually
+    // proves the request is gone.
+    refresh();
+  }
+
+  function askFailed(err) {
+    askSending = false;
+    askSignature = "";
+    renderAsk();
+    // A failed reply is not a reason to keep a dock that may be stale: the
+    // request could have been answered on the desktop a second earlier.
+    refreshPending();
+  }
+
+  function askSubmit(current) {
+    if (askSending) return;
+    askSending = true;
+    renderAsk();
+    var answers = [];
+    var questions = askQuestions(current.item);
+    for (var i = 0; i < questions.length; i++) answers.push(askAnswers[i] || []);
+    postJson("/question/" + encodeURIComponent(current.item.id) + "/reply", { answers: answers })
+      .then(askDone, askFailed);
+  }
+
+  function askReject(current) {
+    if (askSending) return;
+    askSending = true;
+    renderAsk();
+    var path = current.kind === "question"
+      ? "/question/" + encodeURIComponent(current.item.id) + "/reject"
+      : "/permission/" + encodeURIComponent(current.item.id) + "/reply";
+    var body = current.kind === "question" ? {} : { reply: "reject" };
+    postJson(path, body).then(askDone, askFailed);
+  }
+
+  function askAllow(current, reply) {
+    if (askSending) return;
+    askSending = true;
+    renderAsk();
+    postJson("/permission/" + encodeURIComponent(current.item.id) + "/reply", { reply: reply })
+      .then(askDone, askFailed);
+  }
+
+  function askNext(current) {
+    var questions = askQuestions(current.item);
+    if (askTab >= questions.length - 1) {
+      askSubmit(current);
+      return;
+    }
+    askTab++;
+    renderAsk();
+  }
+
+  function askBack() {
+    if (askTab <= 0) return;
+    askTab--;
+    renderAsk();
+  }
+
+  function esc(text) {
+    return String(text === undefined || text === null ? "" : text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function askQuestionHtml(current) {
+    var questions = askQuestions(current.item);
+    var question = questions[askTab] || {};
+    var options = Array.isArray(question.options) ? question.options : [];
+    var multiple = question.multiple === true;
+    var last = askTab >= questions.length - 1;
+
+    var head = questions.length > 1
+      ? "Question " + (askTab + 1) + " of " + questions.length
+      : (typeof question.header === "string" && question.header ? question.header : "Question");
+
+    var html =
+      '<div data-oc-ask-head><span data-oc-ask-title>' + esc(head) + "</span>" +
+      '<button type="button" data-oc-ask-act="reject" aria-label="Dismiss">' + CLOSE_ICON + "</button></div>" +
+      '<div data-oc-ask-body><p data-oc-ask-text>' + esc(question.question) + "</p>" +
+      '<div data-oc-ask-options role="' + (multiple ? "group" : "radiogroup") + '">';
+
+    for (var i = 0; i < options.length; i++) {
+      var option = options[i] || {};
+      var label = typeof option.label === "string" ? option.label : "";
+      html +=
+        '<button type="button" data-oc-ask-option="' + esc(label) + '"' +
+        ' role="' + (multiple ? "checkbox" : "radio") + '"' +
+        ' aria-checked="' + (askPicked(label) ? "true" : "false") + '"' +
+        ' data-picked="' + (askPicked(label) ? "true" : "false") + '"' +
+        (askSending ? " disabled" : "") + ">" +
+        "<span data-oc-ask-label>" + esc(label) + "</span>" +
+        (option.description ? "<span data-oc-ask-desc>" + esc(option.description) + "</span>" : "") +
+        "</button>";
+    }
+
+    html += "</div>";
+    // Stated rather than hidden: typing a free-text answer is upstream's dock
+    // only, and picking an option is not always the same thing as answering.
+    if (question.custom !== false) {
+      html += '<p data-oc-ask-note>A typed answer needs the desktop; the options work here.</p>';
+    }
+    html += "</div>";
+
+    var picked = (askAnswers[askTab] || []).length > 0;
+    html +=
+      "<div data-oc-ask-foot>" +
+      (askTab > 0 ? '<button type="button" data-oc-ask-act="back"' + (askSending ? " disabled" : "") + ">Back</button>" : "") +
+      '<button type="button" data-oc-ask-act="next" data-oc-ask-primary=""' +
+      (askSending || !picked ? " disabled" : "") + ">" +
+      (askSending ? "Sending..." : last ? "Submit" : "Next") +
+      "</button></div>";
+    return html;
+  }
+
+  function askPermissionHtml(current) {
+    var request = current.item.request || {};
+    var patterns = Array.isArray(request.patterns) ? request.patterns : [];
+    var title = typeof request.permission === "string" && request.permission ? request.permission : "Permission";
+
+    var html =
+      '<div data-oc-ask-head><span data-oc-ask-title>' + esc(title) + "</span>" +
+      '<button type="button" data-oc-ask-act="reject" aria-label="Reject">' + CLOSE_ICON + "</button></div>" +
+      '<div data-oc-ask-body><p data-oc-ask-text>Allow this?</p>';
+    if (patterns.length) {
+      html += '<div data-oc-ask-patterns>';
+      for (var i = 0; i < patterns.length; i++) {
+        html += "<code>" + esc(patterns[i]) + "</code>";
+      }
+      html += "</div>";
+    }
+    html += "</div>";
+
+    var off = askSending ? " disabled" : "";
+    html +=
+      "<div data-oc-ask-foot>" +
+      '<button type="button" data-oc-ask-act="reject"' + off + ">Reject</button>" +
+      '<button type="button" data-oc-ask-act="always"' + off + ">Always</button>" +
+      '<button type="button" data-oc-ask-act="once" data-oc-ask-primary=""' + off + ">" +
+      (askSending ? "Sending..." : "Allow once") +
+      "</button></div>";
+    return html;
+  }
+
+  function renderAsk() {
+    if (!ASK_ENABLED || !askEl) return;
+    var current = askFor();
+
+    if (!current || upstreamDock()) {
+      // Both conditions, not just the signature: a successful reply clears the
+      // signature before refetching, so keying the early return on the
+      // signature alone left the answered request on screen.
+      if (askEl.hidden && askSignature === "") return;
+      askSignature = "";
+      askEl.hidden = true;
+      askEl.innerHTML = "";
+      askEl.removeAttribute("data-oc-ask-kind");
+      return;
+    }
+
+    var questions = askQuestions(current.item);
+    if (askId !== current.item.id) askReset(current.item.id, questions.length);
+
+    // Idempotent: the DOM observer watches body for childList changes, so an
+    // unconditional rewrite here is a mutation that wakes the observer, which
+    // calls this again. Everything the markup depends on is in the signature.
+    var signature = [
+      current.kind,
+      current.item.id,
+      askTab,
+      askSending ? "1" : "0",
+      JSON.stringify(askAnswers)
+    ].join("|");
+    if (signature === askSignature) return;
+    askSignature = signature;
+
+    askEl.hidden = false;
+    askEl.setAttribute("data-oc-ask-kind", current.kind);
+    askEl.innerHTML = current.kind === "question" ? askQuestionHtml(current) : askPermissionHtml(current);
+  }
+
+  function mountAsk() {
+    if (!ASK_ENABLED) return;
+    if (askEl && askEl.isConnected) {
+      renderAsk();
+      return;
+    }
+    askEl = document.createElement("div");
+    askEl.setAttribute("data-oc-ask", "");
+    askEl.hidden = true;
+    // One delegated listener, because renderAsk replaces the innerHTML: per
+    // button handlers would be discarded on every redraw.
+    askEl.addEventListener("click", function (event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest("[data-oc-ask-act],[data-oc-ask-option]")
+        : null;
+      if (!target) return;
+      event.preventDefault();
+      var current = askFor();
+      if (!current) return;
+
+      var option = target.getAttribute("data-oc-ask-option");
+      if (option !== null) {
+        if (askSending) return;
+        var question = askQuestions(current.item)[askTab] || {};
+        askPick(option, question.multiple === true);
+        return;
+      }
+
+      var act = target.getAttribute("data-oc-ask-act");
+      if (act === "reject") askReject(current);
+      else if (act === "always") askAllow(current, "always");
+      else if (act === "once") askAllow(current, "once");
+      else if (act === "back") askBack();
+      else if (act === "next") askNext(current);
+    });
+    document.body.appendChild(askEl);
+    askSignature = "";
+    renderAsk();
+  }
+
+  function unmountAsk() {
+    askSignature = "";
+    askId = "";
+    askTab = 0;
+    askAnswers = [];
+    askSending = false;
+    if (askEl && askEl.parentNode) askEl.parentNode.removeChild(askEl);
+    askEl = null;
+  }
+
   /* ---------- refresh ---------- */
 
   function refresh() {
@@ -945,6 +1335,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (results[1] !== null) status = results[1];
       render();
       renderStatus();
+      renderAsk();
       renderDiag();
     });
   }
@@ -1035,6 +1426,9 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (id) attention[id] = "permission";
       render();
       renderStatus();
+      // The event says a request exists; it does not carry the request in a
+      // shape the dock can rely on across both schema generations. Refetch.
+      if (ASK_ENABLED) refreshPending();
       return;
     }
 
@@ -1042,6 +1436,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (id) attention[id] = "question";
       render();
       renderStatus();
+      if (ASK_ENABLED) refreshPending();
       return;
     }
 
@@ -1053,6 +1448,9 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (id) delete attention[id];
       render();
       renderStatus();
+      // Answered somewhere else: take the dock down rather than leave a
+      // request on screen that no longer exists.
+      if (ASK_ENABLED) refreshPending();
       return;
     }
 
@@ -1141,6 +1539,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
           else renderStatus();
           // The tab bar appears and disappears with the session route.
           mountChanges();
+          if (!askEl || !askEl.isConnected) mountAsk();
+          else renderAsk();
         }
       } finally {
         // stopWatchingDom() may have run inside the try.
@@ -1165,6 +1565,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (STRIP_ENABLED) mount();
     mountStatus();
     mountChanges();
+    mountAsk();
     startStatusTick();
     watchDom();
     if (!WANTS_DATA) return;
@@ -1186,12 +1587,13 @@ export function buildOverlayJs(config: OverlayConfig): string {
     unmount();
     unmountStatus();
     unmountChanges();
+    unmountAsk();
   }
 
   // The strip and the status bar are the only things that need session data;
   // the changes button reads the DOM only. But it still has to be mounted and
   // unmounted with the breakpoint, so it cannot ride on WANTS_DATA.
-  var WANTS_DATA = STRIP_ENABLED || STATUS_ENABLED;
+  var WANTS_DATA = STRIP_ENABLED || STATUS_ENABLED || ASK_ENABLED;
   var WANTS_DOM = WANTS_DATA || CHANGES_ENABLED;
 
   function sync() {
@@ -1207,6 +1609,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (!active()) return;
     render();
     renderStatus();
+    // The dock belongs to the session on screen, and the route just changed.
+    renderAsk();
   });
 
   document.addEventListener("visibilitychange", function () {

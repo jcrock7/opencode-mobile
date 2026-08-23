@@ -4,7 +4,7 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, maxWidth: 767, debug: false };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, askDock: true, maxWidth: 767, debug: false };
 
 /** Remove every balanced @media block, leaving only unconditional rules. */
 function stripMediaBlocks(css: string): string {
@@ -635,15 +635,38 @@ describe("overlay assets", () => {
       expect(() => new Function(js)).not.toThrow();
     });
 
-    it("reads the endpoints it claims to and writes nothing", () => {
+    it("reads the endpoints it claims to", () => {
       const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
       expect(js).toContain('getJson("/session")');
       expect(js).toContain('getJson("/session/status")');
+      expect(js).toContain('getPending("/question"');
+      expect(js).toContain('getPending("/permission"');
       // Addressed through apiUrl() so the call reaches the same OpenCode
       // instance the app is using; the endpoint itself is still /event.
       expect(js).toContain('EventSource(apiUrl("/event")');
-      expect(js).not.toContain('method: "POST"');
+    });
+
+    it("writes only to the endpoints that answer a request", () => {
+      // The overlay used to be read-only, and that was worth asserting: it
+      // proxies someone else's app and a stray write is a bug you find in
+      // production. It now answers questions and permission requests, which
+      // means POSTing -- so the guarantee narrows rather than disappears.
+      // Nothing else, and nothing destructive.
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      expect(js).toContain('method: "POST"');
       expect(js).not.toContain('method: "DELETE"');
+      expect(js).not.toContain('method: "PUT"');
+      expect(js).not.toContain('method: "PATCH"');
+
+      // Every route the script builds for a write, whether it is passed to
+      // postJson inline or through a variable first.
+      const routes =
+        js.match(/"\/(?:question|permission)\/" \+ encodeURIComponent\([a-zA-Z.]+\) \+ "\/[a-z]+"/g) ?? [];
+      expect(routes).toHaveLength(4);
+      for (const route of routes) expect(route).toMatch(/\/(reply|reject)"$/);
+      // Nothing writes to a path this test did not just enumerate.
+      const calls = js.match(/postJson\(/g) ?? [];
+      expect(calls).toHaveLength(4);
     });
 
     it("never writes through the fetch it wraps", () => {

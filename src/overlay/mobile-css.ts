@@ -721,6 +721,192 @@ export function buildOverlayCss(config: OverlayConfig): string {
   padding-bottom: 0 !important;
 }
 
+/* ---- ask dock --------------------------------------------------------------
+   Rendered by overlay.js when the agent is blocked on a person: a question, or
+   a permission request. Fixed rather than inserted into the composer dock,
+   because it replaces the composer for as long as it is up -- upstream hides
+   the prompt input while a session is blocked, so there is nothing underneath
+   to reach.
+
+   The safe-area inset is added, not assumed: the sheet sits at the bottom of
+   the screen, which on a Home Screen install is under the home indicator. The
+   keyboard-open rule above does not apply here -- this dock has no text input,
+   so the keyboard is never up while it is showing.
+
+   Colours come from OpenCode's own custom properties with a literal fallback,
+   so the sheet is legible in either theme even if a variable is renamed. */
+
+[data-oc-ask] {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  gap: 8px;
+  border-top: 1px solid var(--border-base, rgba(127, 127, 127, 0.32));
+  background: var(--v2-background-bg-base, var(--background-base, #101010));
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.28);
+  font-family: var(--font-family-sans, system-ui, sans-serif);
+  color: var(--text-base, #e5e5e5);
+}
+
+[data-oc-ask][hidden] { display: none; }
+
+[data-oc-ask] [data-oc-ask-head] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+[data-oc-ask] [data-oc-ask-title] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+  color: #a0522a;
+}
+
+[data-oc-ask][data-oc-ask-kind="permission"] [data-oc-ask-title] {
+  text-transform: none;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+[data-oc-ask] [data-oc-ask-head] > button {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: .6;
+}
+
+/* The scrolling part. Everything else is fixed chrome, so a long question
+   scrolls without pushing the buttons off the bottom of the screen. */
+[data-oc-ask] [data-oc-ask-body] {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+[data-oc-ask] [data-oc-ask-text] {
+  margin: 0 0 10px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--text-strong, #f5f5f5);
+  white-space: pre-wrap;
+}
+
+[data-oc-ask] [data-oc-ask-note] {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-weak, #8a8a8a);
+}
+
+[data-oc-ask] [data-oc-ask-patterns] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-oc-ask] [data-oc-ask-patterns] code {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--v2-background-bg-deep, rgba(127, 127, 127, 0.12));
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+[data-oc-ask] [data-oc-ask-options] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+[data-oc-ask] [data-oc-ask-option] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-weak-base, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  background: var(--v2-background-bg-deep, rgba(127, 127, 127, 0.06));
+  color: inherit;
+  text-align: left;
+}
+
+[data-oc-ask] [data-oc-ask-option][data-picked="true"] {
+  border-color: #0c6e68;
+  background: rgba(12, 110, 104, 0.14);
+}
+
+[data-oc-ask] [data-oc-ask-option][disabled] { opacity: .5; }
+
+[data-oc-ask] [data-oc-ask-label] {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+[data-oc-ask] [data-oc-ask-desc] {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-weak, #8a8a8a);
+}
+
+[data-oc-ask] [data-oc-ask-foot] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+[data-oc-ask] [data-oc-ask-foot] > button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border-weak-base, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+[data-oc-ask] [data-oc-ask-foot] > button[data-oc-ask-primary] {
+  flex: 1;
+  justify-content: center;
+  border-color: #0c6e68;
+  background: #0c6e68;
+  color: #ffffff;
+}
+
+[data-oc-ask] [data-oc-ask-foot] > button[disabled] { opacity: .45; }
+
+@media (prefers-color-scheme: dark) {
+  [data-oc-ask] [data-oc-ask-title] { color: #e0925d; }
+}
+
 /* ---- session switcher strip ----------------------------------------------
    Rendered by overlay.js. Styles live here (unconditionally, so the strip is
    never unstyled) but the element only ever mounts on narrow viewports. */

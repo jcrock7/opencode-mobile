@@ -23,6 +23,7 @@ const CONFIG: OverlayConfig = {
   keyboardViewport: true,
   bubbles: true,
   changesButton: true,
+  askDock: true,
   maxWidth: 767,
   debug: false,
 };
@@ -48,14 +49,22 @@ interface Harness {
   scrollCalls: Array<[number, number]>;
   /** The inline height the script pinned on #root, or "" if it pinned none. */
   rootHeight(): string;
-  /** Every request the overlay made, with its headers. */
-  fetched: Array<{ url: string; headers: Record<string, string> }>;
+  /** Every request the overlay made, with its headers, method and body. */
+  fetched: Array<{ url: string; headers: Record<string, string>; method: string; body: string }>;
   /** Override responses by URL. Return undefined to fall through, null for 404. */
   setResponder(fn: (url: string) => unknown): void;
   /** The injected titlebar button, if it mounted. */
   changesButton(): HTMLElement | null;
   /** One of upstream's own tab triggers. */
   trigger(value: string): HTMLElement | null;
+  /** The injected ask dock, if it mounted. */
+  ask(): HTMLElement | null;
+  /** The dock's option buttons, in order. */
+  askOptions(): HTMLElement[];
+  /** The dock's footer buttons, in order. */
+  askButtons(): HTMLElement[];
+  /** The question text the dock is showing. */
+  askText(): string;
 }
 
 /** Stand-in EventSource whose instances are captured so tests can emit. */
@@ -92,6 +101,8 @@ async function harness(
     pendingQuestions?: Array<{ id: string; sessionID: string }>;
     /** Pending permission requests, as GET /permission returns them. */
     pendingPermissions?: Array<{ id: string; sessionID: string }>;
+    /** Put upstream's own question dock on the page, as a desktop width does. */
+    withUpstreamDock?: boolean;
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
@@ -128,6 +139,7 @@ async function harness(
       ${tabs}
       <div data-component="session-turn"><div data-slot="session-turn-content"></div></div>
       ${options.withDock === false ? "" : '<div data-component="session-prompt-dock"></div>'}
+      ${options.withUpstreamDock ? '<div data-component="session-question-dock"></div>' : ""}
     </div>`;
 
   // Upstream's triggers are a real tab control: clicking one selects it and
@@ -146,16 +158,21 @@ async function harness(
 
   const sessions = options.sessions ?? SESSIONS;
   const statusMap = options.statusMap ?? { ses_a: { type: "idle" }, ses_b: { type: "idle" } };
-  const fetched: Array<{ url: string; headers: Record<string, string> }> = [];
+  const fetched: Array<{ url: string; headers: Record<string, string>; method: string; body: string }> = [];
   // A mutable responder rather than a re-mockable fetch: the overlay wraps
   // window.fetch to learn the app's addressing, so by the time a test runs the
   // global is its wrapper, not this stub.
   let responder: ((url: string) => unknown) | null = null;
-  w.fetch = vi.fn((rawUrl: string, init?: { headers?: Record<string, string> }) => {
+  w.fetch = vi.fn((rawUrl: string, init?: { headers?: Record<string, string>; method?: string; body?: string }) => {
     // Real fetch stringifies whatever it is given; the stub must too, or a test
     // for odd input fails inside the stub rather than exercising the overlay.
     const url = String(rawUrl);
-    fetched.push({ url, headers: (init?.headers as Record<string, string>) ?? {} });
+    fetched.push({
+      url,
+      headers: (init?.headers as Record<string, string>) ?? {},
+      method: init?.method ?? "GET",
+      body: init?.body ?? "",
+    });
     // Only answer with data when the call is addressed the way the app
     // addresses it. An un-addressed call reaches an instance that knows about
     // nothing, which is what OpenCode really does -- 200 with an empty array.
@@ -272,6 +289,16 @@ async function harness(
     changesButton: () => doc.querySelector("[data-oc-changes]") as HTMLElement | null,
     trigger: (value: string) =>
       doc.querySelector(`[data-slot="tabs-trigger"][data-value="${value}"]`) as HTMLElement | null,
+    ask: () => {
+      const el = doc.querySelector("[data-oc-ask]") as HTMLElement | null;
+      return el && !el.hidden ? el : null;
+    },
+    askOptions: () =>
+      Array.from(doc.querySelectorAll("[data-oc-ask-option]")) as unknown as HTMLElement[],
+    askButtons: () =>
+      Array.from(doc.querySelectorAll("[data-oc-ask-foot] > button")) as unknown as HTMLElement[],
+    askText: () =>
+      (doc.querySelector("[data-oc-ask-text]") as HTMLElement | null)?.textContent ?? "",
   };
 }
 
@@ -758,7 +785,6 @@ describe("the diagnostic readout", () => {
   it("reports a pending question as attention", async () => {
     h = await harness({ config: { debug: true }, statusMap: { ses_a: { type: "busy" } } });
     h.emit({ type: "question.asked", properties: { sessionID: "ses_a", id: "que_1" } });
-    await h.flush();
 
     expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("att question");
   });
@@ -813,7 +839,6 @@ describe("blocked on a human", () => {
   it("marks the session chip as needing you", async () => {
     h = await harness({ statusMap: { ses_a: { type: "busy" }, ses_b: { type: "busy" } } });
     h.emit({ type: "question.asked", properties: { sessionID: "ses_b", id: "que_1" } });
-    await h.flush();
 
     const chip = Array.from(h.document.querySelectorAll("[data-oc-chip]")).find(
       (el) => el.querySelector("[data-oc-chip-label]")?.textContent === "Fix tunnel",
@@ -1107,7 +1132,7 @@ describe("the changes button", () => {
     // The button reads the DOM only, so it must survive both being disabled --
     // and must not open an event stream to do it.
     h = await harness({
-      config: { sessionStrip: false, statusBar: false, changesButton: true },
+      config: { sessionStrip: false, statusBar: false, askDock: false, changesButton: true },
     });
 
     expect(h.changesButton()).not.toBeNull();
@@ -1306,6 +1331,16 @@ describe("a request that was already pending", () => {
     expect(h.statusText()).toBe("Waiting for you to approve");
   });
 
+  it("keeps a request the fetch found after a live reply for a different one", async () => {
+    h = await harness({
+      pendingQuestions: [{ id: "que_1", sessionID: "ses_a" }],
+    });
+    await h.flush();
+    h.emit({ type: "question.replied", properties: { sessionID: "ses_b", requestID: "que_9" } });
+
+    expect(h.statusState()).toBe("attention");
+  });
+
   it("marks the right chip when the request belongs to another session", async () => {
     h = await harness({ pendingQuestions: [{ id: "que_1", sessionID: "ses_b" }] });
     await h.flush();
@@ -1357,5 +1392,432 @@ describe("a request that was already pending", () => {
     await h.flush();
 
     expect(h.status()).not.toBeNull();
+  });
+});
+
+describe("answering from the phone", () => {
+  // The point of all the pending-request work: a notification you cannot act
+  // on just sends you to find a laptop. These drive the dock end to end,
+  // including the two POSTs that actually answer.
+
+  const QUESTION = {
+    id: "que_1",
+    sessionID: "ses_a",
+    questions: [
+      {
+        question: "Delete the account rows too?",
+        header: "Delete strategy",
+        options: [
+          { label: "Cascade", description: "Delete the transactions with it" },
+          { label: "Keep", description: "Orphan the transactions" },
+        ],
+      },
+    ],
+  };
+
+  /** A responder that serves the request until it is answered, then stops. */
+  function servedOnce(request: unknown, path: string) {
+    let answered = false;
+    return (url: string) => {
+      if (url.indexOf("/reply") !== -1 || url.indexOf("/reject") !== -1) {
+        answered = true;
+        return true;
+      }
+      if (url.startsWith(path)) return answered ? [] : [request];
+      return undefined;
+    };
+  }
+
+  function posts(h: Harness) {
+    return h.fetched.filter((entry) => entry.method === "POST");
+  }
+
+  it("renders the question and its options", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    expect(h.ask()).not.toBeNull();
+    expect(h.askText()).toBe("Delete the account rows too?");
+    expect(h.askOptions().map((el) => el.getAttribute("data-oc-ask-option"))).toEqual([
+      "Cascade",
+      "Keep",
+    ]);
+  });
+
+  it("shows nothing when nothing is pending", async () => {
+    h = await harness();
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+  });
+
+  it("stays out of the way when upstream's own dock is on the page", async () => {
+    // Two docks for one request is worse than none: the same mistake as the
+    // double bubble, where upstream already drew what we were adding.
+    h = await harness({ pendingQuestions: [QUESTION], withUpstreamDock: true });
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+  });
+
+  it("will not submit until something is picked", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    const submit = h.askButtons().find((el) => el.textContent === "Submit");
+    expect(submit?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("marks the option you tap and enables the submit", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+
+    expect(h.askOptions()[0].getAttribute("data-picked")).toBe("true");
+    expect(h.askOptions()[1].getAttribute("data-picked")).toBe("false");
+    const submit = h.askButtons().find((el) => el.textContent === "Submit");
+    expect(submit?.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("replaces the pick rather than adding to it, for a single-answer question", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askOptions()[1].click();
+    await h.flush();
+
+    expect(h.askOptions()[0].getAttribute("data-picked")).toBe("false");
+    expect(h.askOptions()[1].getAttribute("data-picked")).toBe("true");
+  });
+
+  it("posts the chosen label to the reply endpoint", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    h.setResponder(servedOnce(QUESTION, "/question"));
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Submit")!.click();
+    await h.flush();
+
+    const [post] = posts(h);
+    expect(post.url).toContain("/question/que_1/reply");
+    expect(JSON.parse(post.body)).toEqual({ answers: [["Cascade"]] });
+  });
+
+  it("takes the dock down once the request is answered", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    h.setResponder(servedOnce(QUESTION, "/question"));
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Submit")!.click();
+    await h.flush();
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+  });
+
+  it("keeps the dock up when the reply fails", async () => {
+    // The request may still be waiting; dropping the only way to answer it
+    // because one POST failed would be the worst of both.
+    h = await harness({ pendingQuestions: [QUESTION] });
+    h.setResponder((url) => (url.indexOf("/reply") !== -1 ? null : undefined));
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Submit")!.click();
+    await h.flush();
+
+    expect(h.ask()).not.toBeNull();
+    expect(h.askText()).toBe("Delete the account rows too?");
+  });
+
+  it("walks through several questions and sends every answer", async () => {
+    const two = {
+      id: "que_2",
+      sessionID: "ses_a",
+      questions: [
+        { question: "First?", header: "One", options: [{ label: "A", description: "" }] },
+        { question: "Second?", header: "Two", options: [{ label: "B", description: "" }] },
+      ],
+    };
+    h = await harness({ pendingQuestions: [two] });
+    h.setResponder(servedOnce(two, "/question"));
+    await h.flush();
+
+    expect(h.askText()).toBe("First?");
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Next")!.click();
+    await h.flush();
+
+    expect(h.askText()).toBe("Second?");
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Submit")!.click();
+    await h.flush();
+
+    expect(JSON.parse(posts(h)[0].body)).toEqual({ answers: [["A"], ["B"]] });
+  });
+
+  it("goes back to a question you have already answered", async () => {
+    const two = {
+      id: "que_3",
+      sessionID: "ses_a",
+      questions: [
+        { question: "First?", header: "One", options: [{ label: "A", description: "" }] },
+        { question: "Second?", header: "Two", options: [{ label: "B", description: "" }] },
+      ],
+    };
+    h = await harness({ pendingQuestions: [two] });
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Next")!.click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Back")!.click();
+    await h.flush();
+
+    expect(h.askText()).toBe("First?");
+    expect(h.askOptions()[0].getAttribute("data-picked")).toBe("true");
+  });
+
+  it("lets a multiple-choice question take more than one answer", async () => {
+    const multi = {
+      id: "que_4",
+      sessionID: "ses_a",
+      questions: [
+        {
+          question: "Which files?",
+          header: "Files",
+          multiple: true,
+          options: [
+            { label: "a.ts", description: "" },
+            { label: "b.ts", description: "" },
+          ],
+        },
+      ],
+    };
+    h = await harness({ pendingQuestions: [multi] });
+    h.setResponder(servedOnce(multi, "/question"));
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askOptions()[1].click();
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === "Submit")!.click();
+    await h.flush();
+
+    expect(JSON.parse(posts(h)[0].body)).toEqual({ answers: [["a.ts", "b.ts"]] });
+  });
+
+  it("un-picks a multiple-choice option on a second tap", async () => {
+    const multi = {
+      id: "que_5",
+      sessionID: "ses_a",
+      questions: [
+        {
+          question: "Which files?",
+          header: "Files",
+          multiple: true,
+          options: [{ label: "a.ts", description: "" }],
+        },
+      ],
+    };
+    h = await harness({ pendingQuestions: [multi] });
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+    h.askOptions()[0].click();
+    await h.flush();
+
+    expect(h.askOptions()[0].getAttribute("data-picked")).toBe("false");
+  });
+
+  it("rejects a question through the reject endpoint", async () => {
+    h = await harness({ pendingQuestions: [QUESTION] });
+    h.setResponder(servedOnce(QUESTION, "/question"));
+    await h.flush();
+    (h.document.querySelector('[data-oc-ask-act="reject"]') as HTMLElement).click();
+    await h.flush();
+
+    expect(posts(h)[0].url).toContain("/question/que_1/reject");
+  });
+
+  it("says a typed answer needs the desktop rather than pretending otherwise", async () => {
+    // Upstream's dock takes free text; this one does not. Saying so beats
+    // leaving someone hunting for the field.
+    h = await harness({ pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-ask-note]")?.textContent).toContain("desktop");
+  });
+
+  it("omits the note when the question forbids a custom answer", async () => {
+    const fixed = {
+      id: "que_6",
+      sessionID: "ses_a",
+      questions: [
+        {
+          question: "Pick one",
+          header: "Pick",
+          custom: false,
+          options: [{ label: "A", description: "" }],
+        },
+      ],
+    };
+    h = await harness({ pendingQuestions: [fixed] });
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-ask-note]")).toBeNull();
+  });
+
+  it("shows a permission request with what it wants to touch", async () => {
+    h = await harness({
+      pendingPermissions: [
+        { id: "per_1", sessionID: "ses_a", permission: "bash", patterns: ["rm -rf build"] },
+      ] as never,
+    });
+    await h.flush();
+
+    expect(h.ask()?.getAttribute("data-oc-ask-kind")).toBe("permission");
+    expect(h.document.querySelector("[data-oc-ask-patterns] code")?.textContent).toBe(
+      "rm -rf build",
+    );
+  });
+
+  it.each([
+    ["Allow once", "once"],
+    ["Always", "always"],
+    ["Reject", "reject"],
+  ])("sends %s as reply %s", async (label, reply) => {
+    const request = { id: "per_2", sessionID: "ses_a", permission: "bash", patterns: ["ls"] };
+    h = await harness({ pendingPermissions: [request] as never });
+    h.setResponder(servedOnce(request, "/permission"));
+    await h.flush();
+    h.askButtons().find((el) => el.textContent === label)!.click();
+    await h.flush();
+
+    const [post] = posts(h);
+    expect(post.url).toContain("/permission/per_2/reply");
+    expect(JSON.parse(post.body)).toEqual({ reply });
+  });
+
+  it("prefers a question over a permission when both are waiting", async () => {
+    // A question is always a person deciding; a permission request can
+    // sometimes be settled by a rule instead.
+    h = await harness({
+      pendingQuestions: [QUESTION],
+      pendingPermissions: [{ id: "per_3", sessionID: "ses_a", permission: "bash" }] as never,
+    });
+    await h.flush();
+
+    expect(h.ask()?.getAttribute("data-oc-ask-kind")).toBe("question");
+  });
+
+  it("leaves another session's request to that session", async () => {
+    h = await harness({ pendingQuestions: [{ ...QUESTION, sessionID: "ses_b" }] });
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+    expect(h.statusState()).not.toBe("attention");
+  });
+
+  it("answers a sub-agent's question from the parent you are looking at", async () => {
+    // Same reasoning as the status bar: the child id means nothing to you, and
+    // the parent is the session you opened.
+    h = await harness({
+      sessions: [
+        { id: "ses_a", title: "Migrate auth", time: { created: 1, updated: 20 } },
+        { id: "ses_kid", title: "sub", parentID: "ses_a", time: { created: 2, updated: 21 } },
+      ],
+      pendingQuestions: [{ ...QUESTION, sessionID: "ses_kid" }],
+    });
+    await h.flush();
+
+    expect(h.askText()).toBe("Delete the account rows too?");
+  });
+
+  it("does not rewrite the dock when nothing about it changed", async () => {
+    // The DOM observer watches body for childList changes, so an
+    // unconditional rewrite is a mutation that wakes the observer, which
+    // renders again. That loop is what killed every control on the page once.
+    h = await harness({ pendingQuestions: [QUESTION] });
+    await h.flush();
+    const before = h.askOptions()[0];
+    h.document.body.appendChild(h.document.createElement("div"));
+    await h.flush();
+
+    expect(h.askOptions()[0]).toBe(before);
+  });
+
+  it("unmounts at a desktop width", async () => {
+    h = await harness({ width: 1200, pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-ask]")).toBeNull();
+  });
+
+  it("renders nothing when the dock is switched off", async () => {
+    h = await harness({ config: { askDock: false }, pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-ask]")).toBeNull();
+    // The status bar still says a request is waiting: only the answering UI is
+    // off, not the signal that something needs you.
+    expect(h.statusState()).toBe("attention");
+  });
+
+  it("escapes an option label rather than letting it become markup", async () => {
+    const nasty = {
+      id: "que_7",
+      sessionID: "ses_a",
+      questions: [
+        {
+          question: "Pick",
+          header: "Pick",
+          options: [{ label: '<img src=x onerror="boom">', description: "" }],
+        },
+      ],
+    };
+    h = await harness({ pendingQuestions: [nasty] });
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-ask-options] img")).toBeNull();
+    expect(h.document.querySelector("[data-oc-ask-label]")?.textContent).toBe(
+      '<img src=x onerror="boom">',
+    );
+  });
+
+  it("survives a question with no options at all", async () => {
+    h = await harness({
+      pendingQuestions: [{ id: "que_8", sessionID: "ses_a", questions: [{ question: "Well?" }] }],
+    });
+    await h.flush();
+
+    expect(h.askText()).toBe("Well?");
+    expect(h.askOptions()).toHaveLength(0);
+  });
+
+  it("reports what the pending endpoints answered", async () => {
+    // The one readout that separates "nothing is pending" from "this server
+    // cannot see what is pending", which look identical from the phone.
+    h = await harness({ config: { debug: true }, pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    const line = h.document.querySelector("[data-oc-diag]")?.textContent ?? "";
+    expect(line).toContain("pend q200:1 p200:0");
+  });
+
+  it("reports a pending endpoint that refused", async () => {
+    h = await harness({ config: { debug: true } });
+    h.setResponder((url) => (url.startsWith("/question") ? null : undefined));
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("pend q404:-");
   });
 });

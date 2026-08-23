@@ -19,6 +19,7 @@ describe("overlay config", () => {
         keyboardViewport: true,
         bubbles: true,
         changesButton: true,
+        askDock: true,
         maxWidth: DEFAULT_MAX_WIDTH,
         debug: false,
       });
@@ -37,6 +38,13 @@ describe("overlay config", () => {
       expect(config.enabled).toBe(true);
       expect(config.bubbles).toBe(true);
       expect(config.changesButton).toBe(false);
+    });
+
+    it("disables only the ask dock independently", () => {
+      const config = loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY_ASK: "0" });
+      expect(config.enabled).toBe(true);
+      expect(config.statusBar).toBe(true);
+      expect(config.askDock).toBe(false);
     });
 
     it("disables only the transcript tiers independently", () => {

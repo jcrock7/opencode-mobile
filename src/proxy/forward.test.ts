@@ -6,7 +6,7 @@ import { forwardRequest, forwardUpgrade, buildRequestHeaders, wantsHtml, shouldR
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH } from "../overlay/config";
 import type { OverlayConfig } from "../overlay/types";
 
-const OVERLAY: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, maxWidth: 767, debug: false };
+const OVERLAY: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, askDock: true, maxWidth: 767, debug: false };
 
 // The CSP OpenCode actually sends, including the theme-preload script hash.
 const REAL_CSP =
