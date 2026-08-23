@@ -381,18 +381,23 @@ signals.forEach((signal) => {
     already right-aligned it. Adding a box produced a bubble inside a bubble.
     Read the component's own CSS before styling a container around it; the
     overlay's job is usually to adjust what exists, not to add a layer.
-27. **Drive Upstream's Controls, Do Not Reimplement Them**: the Session /
+27. **`opencode serve` Loads No Plugins Until A Request Arrives**: it is declared
+    `instance: false` and resolves an instance per request, so nothing this
+    plugin does -- the proxy, the tunnel, the banner -- happens at startup. Use
+    `npm run serve`, which pokes the server once. Anything that assumes the
+    plugin is up right after `opencode serve` returns is wrong.
+28. **Drive Upstream's Controls, Do Not Reimplement Them**: the Session /
     Changes switch is local component state in `session.tsx`, so the overlay
     clicks the real `[data-slot="tabs-trigger"][data-value="..."]` rather than
     trying to own the state. Hide such a control with `display: none` on its
     container, never remove it -- the triggers must stay in the DOM to be
     clickable.
-28. **Backslashes In `mobile-js.ts` Must Be Doubled**: the script lives in a
+29. **Backslashes In `mobile-js.ts` Must Be Doubled**: the script lives in a
     template literal. A *valid* escape (`\u`, `\n`) resolves at build time and
     is harmless; an *invalid* one (`\d`, `\s`, `\w`) silently loses its
     backslash. `/\d+/` shipped as `/d+/` and matched the "d" in "changed".
     Tests assert on the built asset, which is the only place this is visible.
-29. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+30. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

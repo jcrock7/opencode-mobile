@@ -98,6 +98,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "serve": "node scripts/serve.mjs",
     "print-config": "node scripts/print-global-config.mjs",
     "doctor": "node scripts/doctor.mjs"
   },

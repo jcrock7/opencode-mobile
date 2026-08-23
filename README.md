@@ -73,11 +73,17 @@ npx opencode-mobile install
 opencode attach
 ```
 
-Or start a new session:
+Or start a headless server. Use this repo's wrapper rather than `opencode serve`
+directly:
 
 ```bash
-opencode serve
+npm run serve
 ```
+
+`opencode serve` loads no plugins until a request arrives, so on its own it comes
+up with no plugin and no tunnel. The wrapper starts the same server and makes
+that first request for you -- see
+[the plugin does not start with `opencode serve`](#the-plugin-does-not-start-with-opencode-serve).
 
 **What you'll see:**
 ```
@@ -246,7 +252,8 @@ register a push token.
 ```bash
 git pull
 npm run build
-# restart `opencode serve`
+# restart the server
+npm run serve
 ```
 
 The overlay assets are revalidated rather than fingerprinted, so hard-reload the
@@ -664,6 +671,7 @@ are all covered by the same credential.
 | `npx opencode-mobile install [options]` | Install plugin and `/mobile` command globally |
 | `npx opencode-mobile update [--check]` | Check for updates or install the latest version |
 | `npx opencode-mobile filters <status\|enable\|disable>` | Manage session notification filters |
+| `npm run serve` | Start OpenCode **and** wake the plugin, so the tunnel comes up without a manual poke. Drop-in for `opencode serve`; extra args pass through |
 | `npm run doctor` | Diagnose the chain end to end: plugin registration, build, running instances, local servers, tunnel target, public URL, and whether anything authenticates at the edge |
 | `npm run print-config` | Print the global config to load this checkout as a plugin |
 | `npm run print-config -- --merge` | Write that config to `~/.config/opencode/` |
@@ -783,14 +791,37 @@ npx opencode-mobile install
 
 ### The plugin does not start with `opencode serve`
 
-`opencode serve` starts the HTTP server but loads **no plugins**. Plugins are
-instance-scoped, and serve is declared `instance: false` -- it creates an instance
-per request, keyed by the `?directory=` query parameter or the
-`x-opencode-directory` header. Until something makes a request, there is no
-instance, so there is no plugin: nothing on port 4097, no tunnel, and no
+**Use `npm run serve` instead of `opencode serve` and this does not happen.**
+
+`opencode serve` starts the HTTP server but loads **no plugins**. Its own source
+says why:
+
+```ts
+// Server loads instances per-request via x-opencode-directory header --
+// no need for an ambient project InstanceContext at startup.
+instance: false,
+```
+
+Plugins are instance-scoped, so until a request arrives there is no instance and
+therefore no plugin: nothing on the plugin port, no tunnel, no
 `[opencode-mobile] v...` banner.
 
-Leave the server running and poke it once from another terminal:
+That is normally invisible, because opening the web UI *is* a request. It only
+bites this plugin, because the thing the plugin starts is the tunnel you were
+going to reach it through -- so you cannot use the tunnel to trigger the tunnel.
+
+`npm run serve` runs the same command, watches its output for the line where it
+reports the address it bound, and makes that one request itself. It passes the
+child's output through untouched and forwards Ctrl-C, so it is a drop-in
+replacement. It also reads the **actual** port from that line rather than
+assuming 4096, which covers the case where 4096 was taken and OpenCode quietly
+bound something else -- a confusing failure on its own, since the tunnel then
+points at a port nothing is listening on.
+
+Extra arguments are passed through: `npm run serve -- --port 5000`.
+
+If you would rather do it by hand, leave the server running and poke it once from
+another terminal:
 
 ```bash
 curl -su opencode:"$OPENCODE_SERVER_PASSWORD" \
@@ -798,8 +829,11 @@ curl -su opencode:"$OPENCODE_SERVER_PASSWORD" \
   -o /dev/null -w '%{http_code}\n'
 ```
 
-The serve output should then print the plugin banner and its routes, and start the
-tunnel. Loading the web UI and opening a project has the same effect.
+Loading the web UI and opening a project has the same effect. Note that with
+`OPENCODE_SERVER_PASSWORD` set, a request that gets a 401 may not create the
+instance at all -- so the credentials matter. `npm run serve` sends them when
+they are in the environment, and says so plainly when it gets a 401 instead of
+reporting success.
 
 Note also that `npm run doctor` probes live ports -- run it in a second terminal
 while the server is up, not after stopping it.
