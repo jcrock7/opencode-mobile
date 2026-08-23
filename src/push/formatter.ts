@@ -52,6 +52,12 @@ interface EventProperties {
   id?: string;
   permission?: string;
   patterns?: string[];
+  /** session.progress: how long the session has been busy, preformatted. */
+  elapsed?: string;
+  /** session.progress: the tool part's own title. */
+  toolTitle?: string;
+  /** session.progress: the running tool belongs to a sub-agent. */
+  viaChild?: boolean;
 }
 
 /**
@@ -69,6 +75,7 @@ export function extractProjectPath(event: NotificationEvent, ctx?: PluginContext
       );
     case "session.idle":
     case "session.error":
+    case "session.progress":
     case "permission.updated":
     case "permission.asked":
       return (
@@ -311,6 +318,46 @@ export function formatNotification(
             },
           },
         },
+        ios: iosThread,
+      };
+    }
+    case "session.progress": {
+      // Deliberately quiet in wording as well as in frequency: this fires only
+      // for work that has already outlived the delay, so it is a liveness
+      // signal, not an announcement. The tool goes in the body when one was
+      // running, because "still working" on its own answers less than it asks.
+      const sessionTitle = sessionTitleForFiltering || "Session";
+      const elapsedLabel = String(properties?.elapsed || "");
+      const tool = String(properties?.tool || "");
+      const toolTitle = String(properties?.toolTitle || "");
+      const viaChild = properties?.viaChild === true;
+
+      const toolLabel = tool
+        ? toolTitle && toolTitle !== tool
+          ? `${tool} \u00b7 ${toolTitle}`
+          : tool
+        : "";
+      // A sub-agent's tool is named as one: the user delegated it indirectly
+      // and would not otherwise recognise it as this session's work.
+      const work = toolLabel ? (viaChild ? `sub-agent \u00b7 ${toolLabel}` : toolLabel) : "";
+      const bodyText = work
+        ? elapsedLabel
+          ? `${work} -- running ${elapsedLabel}`
+          : work
+        : elapsedLabel
+          ? `Still working -- ${elapsedLabel}`
+          : "Still working";
+
+      return {
+        title: project ? `${project} still working` : "Still working",
+        subtitle: sessionTitle,
+        body: bodyText,
+        data: { ...baseData, tool, elapsed: elapsedLabel },
+        android: { notification: { channelId: "opencode-sessions" } },
+        // Silent and normal priority. An update on work you already know you
+        // started should be there when you look, not demand that you do.
+        priority: "normal" as const,
+        sound: null,
         ios: iosThread,
       };
     }

@@ -52,6 +52,12 @@ import { tool } from "@opencode-ai/plugin";
 import type { Plugin } from "@opencode-ai/plugin";
 import type { PushToken } from "./src/push";
 import { formatNotification } from "./src/push/formatter";
+import {
+  createProgressTracker,
+  loadProgressConfig,
+  formatElapsed,
+  type ProgressDue,
+} from "./src/push/progress";
 import { sendPush } from "./src/push/sender";
 import { loadTokens, saveTokens } from "./src/push/token-store";
 import { startLocaltunnel, stopLocaltunnel, getLocaltunnelUrl } from "./src/tunnel/localtunnel";
@@ -264,7 +270,10 @@ async function enrichEventForNotification(
   ctx: Parameters<Plugin>[0],
   event: any,
 ): Promise<any> {
-  if (event?.type !== "session.idle") {
+  // session.progress needs this as much as session.idle does: the lookup is
+  // what supplies the project and the session title, and -- because it
+  // resolves parentID -- what lets formatNotification suppress a sub-agent.
+  if (event?.type !== "session.idle" && event?.type !== "session.progress") {
     return event;
   }
 
@@ -331,7 +340,9 @@ async function enrichEventForNotification(
   }
 
   try {
-    if (!existingLast) {
+    // Only a completion quotes the agent's last message. Fetching 50 messages
+    // to build a progress ping would cost more than the ping is worth.
+    if (!existingLast && event.type === "session.idle") {
       const msgs = await fetchJson(
         `${baseUrl}/session/${encodeURIComponent(sessionID)}/message?limit=50`,
         1600,
@@ -884,6 +895,32 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
     console.error("[DEV] Failed to start tunnel:", tunnelError.message);
   }
 
+  // Progress notifications. The tracker holds one timer per busy session and
+  // cancels it the moment the session settles, so only work that outlives the
+  // delay ever notifies -- see src/push/progress.ts for why that is the shape.
+  const progressConfig = loadProgressConfig();
+  const progress = createProgressTracker({
+    config: progressConfig,
+    onDue: (due: ProgressDue) => {
+      void maybeSendPushFromEvent(ctx, {
+        type: "session.progress",
+        properties: {
+          sessionID: due.sessionId,
+          sessionId: due.sessionId,
+          elapsed: formatElapsed(due.elapsedMs),
+          tool: due.tool,
+          toolTitle: due.title,
+          viaChild: due.viaChild,
+        },
+      });
+    },
+  });
+  if (progressConfig.enabled) {
+    console.log(
+      `[PushPlugin] progress notifications after ${Math.round(progressConfig.afterMs / 1000)}s of continuous work`,
+    );
+  }
+
   return {
     tool: {
       mobile: mobileTool,
@@ -915,6 +952,44 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
           console.log("  - Full event:", JSON.stringify(event, null, 2));
         }
         void maybeSendPushFromEvent(ctx, event);
+      }
+
+      // Feed the progress tracker. None of these push on their own.
+      if (eventType === "session.status") {
+        const props = (event as any)?.properties ?? {};
+        const raw = props.status;
+        const statusType = typeof raw === "string" ? raw : raw?.type;
+        const sessionID = extractSessionIdFromEvent(event);
+        if (sessionID && typeof statusType === "string") {
+          progress.onStatus(sessionID, statusType);
+        }
+      } else if (eventType === "session.idle" || eventType === "session.error") {
+        const sessionID = extractSessionIdFromEvent(event);
+        // The session has already notified about stopping; anything still
+        // armed for it is now a notification about work that is over.
+        if (sessionID) progress.onSettled(sessionID);
+      } else if (eventType === "message.part.updated") {
+        // Far too frequent to notify on, cheap to record. Whatever is running
+        // when the timer fires is what the notification gets to say.
+        const props = (event as any)?.properties ?? {};
+        const part = props.part;
+        if (part && part.type === "tool") {
+          const state = part.state ?? {};
+          const sessionID = extractSessionIdFromEvent(event);
+          if (sessionID && (state.status === "running" || state.status === "pending")) {
+            const parentID =
+              (typeof props.parentID === "string" && props.parentID) ||
+              (typeof props.parentSessionID === "string" && props.parentSessionID) ||
+              (typeof props.parentId === "string" && props.parentId) ||
+              undefined;
+            progress.onTool(
+              sessionID,
+              String(part.tool ?? ""),
+              typeof state.title === "string" ? state.title : "",
+              parentID,
+            );
+          }
+        }
       }
 
       if (event.type === "command.executed") {

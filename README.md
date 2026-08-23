@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 520 tests with an enforced 85% coverage threshold
+- Test suite grown to 586 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -325,6 +325,19 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   only at phone widths -- in a browser tab Safari's own toolbar moves the visual
   viewport for reasons that have nothing to do with the keyboard. Switch off
   with `OPENCODE_MOBILE_OVERLAY_KEYBOARD=0`.
+- **Surfaces sub-agent work.** Child sessions are what a sub-agent runs in, and
+  they used to show nowhere at all on a phone: not in the strip (excluded by
+  design) and not in notifications (suppressed by design). The status bar was
+  the worst of it -- while a sub-agent worked, the parent was busy with no tool
+  of its own, so the bar said only "Working" and the delegated work was
+  invisible. A sub-agent's running tool now reports on its parent's bar, named
+  as one (`sub-agent · grep · callers of migrate()`), and the parent's chip
+  carries a `+2` badge counting its busy children. Deliberately *not* chips of
+  their own: several sub-agents can run at once and each is transient, so their
+  chips would push the sessions you navigate by off the end of the strip. This
+  also fixed a latent bug -- the running tool was tracked in a single global, so
+  a tool starting in any session relabelled the bar for the one you were looking
+  at. It is now keyed per session.
 - **Grows the project and session rows in the drawer**, the list you actually
   pick a session from. Upstream sizes them for a mouse -- a project row is 28px,
   a session row 40px -- and each carries absolutely-positioned trailing actions
@@ -406,6 +419,49 @@ would reliably win.
 The overlay targets `data-component` / `data-slot` attributes. If a future OpenCode
 release renames one, that rule stops applying -- it does not break the page.
 
+## Progress notifications
+
+Four kinds of notification existed before this: a completion, an error, and the
+two permission prompts. All four fire when the agent has **stopped**. Nothing
+told you work was underway, so a long run looked exactly like a dead tunnel
+until it finished.
+
+The obvious fix -- notify when a session starts working -- roughly doubles the
+volume and most of what it adds is worthless: a turn that finishes in eight
+seconds does not need a "started" push followed a moment later by a "finished"
+one. So this is **not** a start notification. A timer is armed when the session
+goes busy and **cancelled if the session settles first**. Only work that
+outlives the delay ever notifies, which is precisely the work you cannot
+otherwise tell is happening.
+
+```
+Agent finished the task          <- session.idle      (existing)
+miser still working              <- session.progress  (new)
+  bash · npm test -- running 1m 30s
+```
+
+Details that matter:
+
+- **One notification per busy period.** No repeats. A ping every minute through
+  an hour-long run is the noise this is trying to avoid, and the completion
+  notification still closes the loop.
+- **It names the work.** The running tool arrives on `message.part.updated`,
+  which is far too frequent to notify on but cheap to record. Whatever was
+  running when the timer fires goes in the body, so the notification says what
+  is happening rather than only that something is.
+- **Sub-agents are attributed to their parent.** A bare child session id means
+  nothing to you, so a sub-agent's tool is reported against the session you
+  started, labelled `sub-agent · ...`. A sub-agent's own session never gets its
+  own notification -- children are suppressed globally, and a test asserts the
+  progress kind is not the one that leaks them.
+- **It is quiet.** Normal priority, no sound. An update on work you already know
+  you started should be there when you look, not demand that you look.
+- **The timers are `unref`'d**, so a pending one can never be the reason
+  OpenCode takes an extra minute to exit.
+
+Off with `OPENCODE_MOBILE_PROGRESS=0`; retimed with
+`OPENCODE_MOBILE_PROGRESS_AFTER=<seconds>`.
+
 ## Securing the tunnel
 
 **A tunnel publishes a server that can run shell commands in your working tree.**
@@ -469,6 +525,8 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY_KEYBOARD` | Pin the shell to the visual viewport so the keyboard cannot push the layout off screen. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
 | `OPENCODE_MOBILE_OVERLAY_DEBUG` | `1` shows a badge on the page proving the overlay is applied | off |
+| `OPENCODE_MOBILE_PROGRESS` | Progress notification for work that outlives the delay below. `0` disables it | enabled |
+| `OPENCODE_MOBILE_PROGRESS_AFTER` | Seconds a session must stay busy before it is worth notifying about. Accepts 5-3600; anything else is treated as a typo and ignored | `60` |
 | `OPENCODE_SERVER_PASSWORD` | **OpenCode's own** HTTP Basic password. Not read by this plugin, but see [Securing the tunnel](#securing-the-tunnel) | unset |
 
 ### Tunnel Providers

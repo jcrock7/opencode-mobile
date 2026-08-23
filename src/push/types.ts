@@ -18,6 +18,17 @@ export interface Notification {
   categoryId?: string;
   android?: AndroidNotificationConfig;
   ios?: iOSNotificationConfig;
+  /**
+   * Expo delivery priority. Defaults to "high", which is right for the events
+   * that want you to act -- a completion, an error, a permission prompt. A
+   * progress update is not one of those, so it can ask for "normal".
+   */
+  priority?: "default" | "normal" | "high";
+  /**
+   * Notification sound, defaulting to "default". `null` delivers silently,
+   * which is what an update on work you already know you started should do.
+   */
+  sound?: "default" | null;
 }
 
 export interface AndroidNotificationConfig {

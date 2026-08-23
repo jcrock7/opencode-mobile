@@ -550,3 +550,144 @@ describe("the keyboard viewport", () => {
     expect(h.statusText()).toBe("bash · npm test");
   });
 });
+
+describe("sub-agent sessions", () => {
+  // Child sessions are excluded from the strip as chips of their own, but the
+  // work they do has to be visible somewhere: it used to show nowhere at all.
+  const WITH_CHILD = [
+    { id: "ses_a", title: "Migrate auth", time: { created: 1, updated: 20 } },
+    { id: "ses_b", title: "Fix tunnel", time: { created: 1, updated: 10 } },
+    { id: "ses_c", title: "Search callers", parentID: "ses_a", time: { created: 2, updated: 21 } },
+    { id: "ses_d", title: "Read schema", parentID: "ses_a", time: { created: 2, updated: 22 } },
+  ];
+
+  function childTool(sessionID: string, tool: string, title: string) {
+    return {
+      type: "message.part.updated",
+      properties: {
+        sessionID,
+        part: {
+          type: "tool",
+          callID: "call_" + sessionID,
+          tool,
+          state: { status: "running", title, time: { start: Date.now() - 3000 } },
+        },
+      },
+    };
+  }
+
+  it("reports a sub-agent's tool on the parent's status bar", async () => {
+    // The parent is busy with no tool of its own while it delegates, so the bar
+    // used to say only "Working" and the delegated work was invisible.
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_c: { type: "busy" } },
+    });
+    h.emit(childTool("ses_c", "grep", "callers of migrate()"));
+
+    expect(h.status()!.hidden).toBe(false);
+    expect(h.statusText()).toBe("sub-agent · grep · callers of migrate()");
+  });
+
+  it("prefers the session's own tool over a sub-agent's", async () => {
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_c: { type: "busy" } },
+    });
+    h.emit(childTool("ses_c", "grep", "callers"));
+    h.emit(childTool("ses_a", "bash", "npm test"));
+
+    expect(h.statusText()).toBe("bash · npm test");
+  });
+
+  it("does not let a sub-agent finishing clear its parent's tool", async () => {
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" } },
+    });
+    h.emit(childTool("ses_a", "bash", "npm test"));
+    h.emit({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_c",
+        part: {
+          type: "tool",
+          callID: "call_c",
+          tool: "bash",
+          state: { status: "completed", title: "npm test", time: { start: 1 } },
+        },
+      },
+    });
+
+    expect(h.statusText()).toBe("bash · npm test");
+  });
+
+  it("does not let another session's tool overwrite the one on screen", async () => {
+    // The tracker used to be a single global, so a tool starting anywhere
+    // relabelled the bar for the session you were looking at.
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_b: { type: "busy" } },
+    });
+    h.emit(childTool("ses_a", "bash", "npm test"));
+    h.emit(childTool("ses_b", "edit", "tunnel.ts"));
+
+    expect(h.statusText()).toBe("bash · npm test");
+  });
+
+  it("badges the parent chip with its busy sub-agent count", async () => {
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_c: { type: "busy" }, ses_d: { type: "busy" } },
+    });
+
+    const chips = h.document.querySelectorAll("[data-oc-chip]");
+    const first = chips[0] as HTMLElement;
+    expect(first.querySelector("[data-oc-chip-sub]")?.textContent).toBe("+2");
+    expect(first.getAttribute("aria-label")).toContain("2 sub-agents");
+  });
+
+  it("counts a sub-agent that is running a tool but has no status entry", async () => {
+    h = await harness({ sessions: WITH_CHILD, statusMap: { ses_a: { type: "busy" } } });
+    h.emit(childTool("ses_c", "grep", "callers"));
+    await h.flush();
+
+    const first = h.document.querySelector("[data-oc-chip]") as HTMLElement;
+    expect(first.querySelector("[data-oc-chip-sub]")?.textContent).toBe("+1");
+  });
+
+  it("gives sub-agents no chip of their own", async () => {
+    // Several can run at once; their chips would push the sessions you
+    // navigate by off the end of the strip.
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_c: { type: "busy" }, ses_d: { type: "busy" } },
+    });
+
+    const labels = Array.from(h.document.querySelectorAll("[data-oc-chip-label]")).map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual(["Migrate auth", "Fix tunnel"]);
+  });
+
+  it("drops the badge once the sub-agents go idle", async () => {
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_c: { type: "busy" } },
+    });
+    expect(h.document.querySelector("[data-oc-chip-sub]")).not.toBeNull();
+
+    h.emit({ type: "session.status", properties: { sessionID: "ses_c", status: { type: "idle" } } });
+
+    expect(h.document.querySelector("[data-oc-chip-sub]")).toBeNull();
+  });
+
+  it("falls back to the parent's own label when no sub-agent has a tool yet", async () => {
+    h = await harness({
+      sessions: WITH_CHILD,
+      statusMap: { ses_a: { type: "busy" }, ses_c: { type: "busy" } },
+    });
+
+    expect(h.statusText()).toBe("Working");
+  });
+});

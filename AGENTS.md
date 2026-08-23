@@ -335,7 +335,19 @@ signals.forEach((signal) => {
     an `overflow-clip` ancestor -- the composer's control row -- a floor makes
     the control overflow its slot and paint over its neighbour. Grow the tap
     area with an inset pseudo-element there instead.
-17. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+17. **Per-Session State, Not Globals**: Anything derived from the event stream
+    is keyed by session id. A single global "what is running" let a tool
+    starting in any session relabel the status bar for the one on screen, and
+    let a sub-agent finishing clear its parent's label.
+18. **Child Sessions Are Attributed, Never Named Alone**: A sub-agent's session
+    id means nothing to the user. Surface its work against the parent they
+    started, labelled as delegated. Children still get no chip of their own and
+    no notification of their own -- `formatNotification` suppresses them
+    globally, and any new notification kind inherits that.
+19. **A Progress Notification Is Not A Start Notification**: Arm on busy, cancel
+    on settle, fire once. A push for every turn that begins is noise, because
+    most turns end before you could read it.
+20. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

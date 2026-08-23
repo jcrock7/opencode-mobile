@@ -146,9 +146,11 @@ Every deliverable re-checked against the built code.
 | D6 | Streaming proxy | HTML-only rewrite; SSE proven to stream incrementally against a real server; upgrades proxied end to end; only `content-length`/`transfer-encoding` are ever deleted, so the CSP is forwarded verbatim; compressed HTML passed through; 8 MiB ceiling with replay. 40 tests. |
 | D7 | Routing | Segment-aware prefixes; preflight scoped to plugin routes. 36 tests. |
 | D8 | Wiring | Tunnel targets `pluginPort`; loopback bind retained; upgrade handler registered; manual `/tunnel` defaults to the plugin port. 11 assembled-server tests. |
-| D9 | Notification fixes | A1 `truncateMultiline` keeps newlines; A2 project in title; A3 `iosThread` on all 4 branches; A6 error gets 320 chars + `bigtext`. 46 tests. |
+| D9 | Notification fixes | A1 `truncateMultiline` keeps newlines; A2 project in title; A3 `iosThread` on all 4 branches; A6 error gets 320 chars + `bigtext`. 55 tests. |
+| D13 | Sub-agent visibility | Child sessions keep their parentage; a sub-agent's running tool reports on its parent's status bar, labelled as one; the parent chip badges its busy-child count. Also fixed the single-global `running` that let any session relabel the bar. 9 DOM tests. |
+| D14 | Progress notifications (A4) | `src/push/progress.ts`: a timer armed on busy and cancelled on settle, so only work outliving the delay notifies. One per busy period, names the running tool, attributes sub-agents to the parent, silent at normal priority, `unref`'d. 46 tracker tests + 10 formatter tests + 2 sender tests. |
 | D10 | Documentation | README overlay/security/env/troubleshooting sections; AGENTS.md module layout and 5 new invariants. |
-| D11 | Tests | 520 passing, 0 failing, 2 skipped (live-ngrok, opt-in). Coverage 89.18% statements / 85.92% branches / 93.87% functions / 89.33% lines, all above the enforced 85% threshold. |
+| D11 | Tests | 586 passing, 0 failing, 2 skipped (live-ngrok, opt-in). Coverage 90.08% statements / 87.53% branches / 94.47% functions / 90.19% lines, all above the enforced 85% threshold. |
 
 ### Coverage scope
 

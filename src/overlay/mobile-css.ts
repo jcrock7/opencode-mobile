@@ -491,6 +491,23 @@ export function buildOverlayCss(config: OverlayConfig): string {
   background: currentColor;
 }
 
+/* Sub-agent count. Delegated work shown as "+2" on the parent chip rather than
+   as chips of its own: a sub-agent is transient and there can be several at
+   once, so its own chip would push the sessions you navigate by off the end of
+   a 390pt strip. */
+[data-oc-chip] > [data-oc-chip-sub] {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  background: currentColor;
+  /* The chip's own background, punched out of the state colour, so the badge
+     reads as a count rather than another status dot. */
+  color: var(--background-panel, #1c1c1c);
+}
+
 /* The four states, matching the plugin's own notification vocabulary. */
 [data-oc-chip][data-oc-state="busy"]      { color: #0c6e68; background: rgba(12, 110, 104, 0.12); }
 [data-oc-chip][data-oc-state="attention"] { color: #a0522a; background: rgba(160, 82, 42, 0.14); }

@@ -125,12 +125,17 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var status = Object.create(null);
   var attention = Object.create(null);
   var errored = Object.create(null);
+  // childId -> parentId, for every child session the list reported.
+  var parentOf = Object.create(null);
 
   var strip = null;
   var statusEl = null;
   var statusTick = null;
-  // The live tool for the session on screen: { tool, title, startedAt }.
-  var running = null;
+  // sessionId -> { tool, title, startedAt } for whatever that session is
+  // running right now. Keyed by session rather than held as one global,
+  // because a tool starting in a second session used to overwrite the label
+  // for the one you were looking at.
+  var runningBySession = Object.create(null);
   var stream = null;
   var observer = null;
   var refreshTimer = null;
@@ -168,6 +173,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (!list) return [];
 
     var out = [];
+    var nextParents = Object.create(null);
     for (var i = 0; i < list.length; i++) {
       var item = list[i];
       if (!item || typeof item !== "object") continue;
@@ -176,13 +182,18 @@ export function buildOverlayJs(config: OverlayConfig): string {
       var id = firstString(info.id, info.sessionID, info.sessionId);
       if (!id) continue;
 
-      // Child sessions are sub-agent work. They would triple the strip's
-      // length for context you did not ask for, so they stay out -- the same
-      // call the plugin makes for notifications.
+      // Child sessions are sub-agent work. They stay out of the strip as
+      // chips of their own -- on a 390pt screen they would multiply its length
+      // for context you did not ask for -- but their parentage is recorded so
+      // the work they are doing can be attributed to the parent you are
+      // actually looking at.
       var parent = firstString(
         info.parentID, info.parentId, info.parentSessionID, info.parentSessionId
       );
-      if (parent) continue;
+      if (parent) {
+        nextParents[id] = parent;
+        continue;
+      }
 
       var time = info.time && typeof info.time === "object" ? info.time : {};
       if (time.archived) continue;
@@ -194,7 +205,52 @@ export function buildOverlayJs(config: OverlayConfig): string {
         updated: isFinite(updated) ? updated : 0
       });
     }
+    // Rebuilt wholesale each refresh so a finished sub-agent stops counting.
+    parentOf = nextParents;
     return out;
+  }
+
+  /* ---------- sub-agents ---------- */
+
+  /** The child sessions of 'id' that are doing something right now. */
+  function busyChildren(id) {
+    var out = [];
+    if (!id) return out;
+    var ids = Object.keys(parentOf);
+    for (var i = 0; i < ids.length; i++) {
+      var child = ids[i];
+      if (parentOf[child] !== id) continue;
+      var type = status[child];
+      if (type === "busy" || type === "retry" || runningBySession[child]) out.push(child);
+    }
+    return out;
+  }
+
+  /**
+   * What to report for the session on screen. Its own running tool wins; with
+   * none, a sub-agent's tool stands in, flagged so the label can say so. That
+   * is the case the status bar used to get wrong: while a sub-agent worked,
+   * the parent was busy with no tool of its own, so the bar said only
+   * "Working" and the delegated work was invisible.
+   */
+  function liveFor(id) {
+    if (!id) return null;
+    var own = runningBySession[id];
+    if (own) return own;
+    var kids = busyChildren(id);
+    for (var i = 0; i < kids.length; i++) {
+      var live = runningBySession[kids[i]];
+      if (live) {
+        return {
+          sessionID: live.sessionID,
+          tool: live.tool,
+          title: live.title,
+          startedAt: live.startedAt,
+          viaChild: true
+        };
+      }
+    }
+    return null;
   }
 
   function normalizeStatus(raw) {
@@ -284,6 +340,22 @@ export function buildOverlayJs(config: OverlayConfig): string {
     text.textContent = session.title;
     node.appendChild(text);
 
+    // Delegated work, as a count rather than chips of its own. A sub-agent is
+    // transient and there can be several at once, so chips would push the
+    // sessions you navigate by off the end of the strip -- but "something is
+    // running under here" is exactly what you cannot otherwise tell.
+    var kids = busyChildren(session.id).length;
+    if (kids > 0) {
+      var badge = document.createElement("span");
+      badge.setAttribute("data-oc-chip-sub", "");
+      badge.textContent = "+" + kids;
+      node.appendChild(badge);
+      node.setAttribute(
+        "aria-label",
+        session.title + " -- " + label + ", " + kids + (kids === 1 ? " sub-agent" : " sub-agents")
+      );
+    }
+
     return node;
   }
 
@@ -368,8 +440,12 @@ export function buildOverlayJs(config: OverlayConfig): string {
   /** The label for a running tool: prefer the tool's own title. */
   function runningLabel(item) {
     if (!item) return "Working";
-    if (item.title && item.title !== item.tool) return item.tool + " \u00b7 " + item.title;
-    return item.tool || "Working";
+    var body = item.title && item.title !== item.tool
+      ? item.tool + " \u00b7 " + item.title
+      : (item.tool || "Working");
+    // Say when the work is a sub-agent's rather than this session's own, so a
+    // tool you did not ask for directly is not mistaken for one you did.
+    return item.viaChild ? "sub-agent \u00b7 " + body : body;
   }
 
   function renderStatus() {
@@ -410,7 +486,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     }
 
     statusEl.setAttribute("data-oc-state", "busy");
-    var live = running && running.sessionID === id ? running : null;
+    var live = liveFor(id);
     if (text) text.textContent = type === "retry" ? "Retrying" : runningLabel(live);
     if (time) time.textContent = live ? elapsed(live.startedAt) : "";
     statusEl.hidden = false;
@@ -424,7 +500,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       var route = routeParts();
       var id = route && route.current;
       if (!id || status[id] !== "busy") return;
-      var live = running && running.sessionID === id ? running : null;
+      var live = liveFor(id);
       var time = statusEl.querySelector("[data-oc-status-time]");
       if (time && live) time.textContent = elapsed(live.startedAt);
     }, 1000);
@@ -511,18 +587,24 @@ export function buildOverlayJs(config: OverlayConfig): string {
       var part = (payload.properties || {}).part;
       if (!part || part.type !== "tool") return;
       var state = part.state || {};
+      if (!id) return;
       if (state.status === "running" || state.status === "pending") {
-        running = {
+        runningBySession[id] = {
           sessionID: id,
           tool: String(part.tool || ""),
           title: typeof state.title === "string" ? state.title : "",
           startedAt: Number((state.time || {}).start) || Date.now()
         };
-      } else if (running && running.sessionID === id && part.tool === running.tool) {
+      } else {
+        var held = runningBySession[id];
         // The tool we were reporting finished; drop it rather than leaving a
-        // stale label and a counter that keeps climbing.
-        running = null;
+        // stale label and a counter that keeps climbing. Scoped to the session
+        // that reported it, so a sub-agent finishing cannot clear its parent's.
+        if (held && part.tool === held.tool) delete runningBySession[id];
       }
+      // A sub-agent's tool shows on its parent's bar, so a child's event has
+      // to redraw even though the child is not the session on screen.
+      render();
       renderStatus();
       return;
     }
@@ -533,7 +615,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       var raw = props.status;
       var next = typeof raw === "string" ? raw : (raw && raw.type);
       if (typeof next === "string") status[id] = next;
-      if (next === "idle") { delete errored[id]; running = null; }
+      if (next === "idle") { delete errored[id]; delete runningBySession[id]; }
       render();
       renderStatus();
       return;
@@ -542,7 +624,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (type === "session.idle") {
       if (!id) return;
       status[id] = "idle";
-      if (running && running.sessionID === id) running = null;
+      delete runningBySession[id];
       render();
       renderStatus();
       return;

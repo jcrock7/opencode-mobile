@@ -149,6 +149,27 @@ describe("sendPush", () => {
     expect(message.android).toMatchObject({ notification: { channelId: "opencode-sessions" } });
   });
 
+  it("sends high priority with sound unless told otherwise", async () => {
+    await seedTokens([token()]);
+    const { sendPush } = await loadModule();
+
+    await sendPush(notification());
+    const [message] = sentMessages();
+    expect(message.priority).toBe("high");
+    expect(message.sound).toBe("default");
+  });
+
+  it("honours a quieter delivery when one is asked for", async () => {
+    // Progress updates ask for this: present when you look, not demanding.
+    await seedTokens([token()]);
+    const { sendPush } = await loadModule();
+
+    await sendPush(notification({ priority: "normal", sound: null }));
+    const [message] = sentMessages();
+    expect(message.priority).toBe("normal");
+    expect(message.sound).toBeNull();
+  });
+
   it("overrides serverUrl per device when that device stored one", async () => {
     await seedTokens([
       token({ serverUrl: "http://192.168.1.10:4096" }),

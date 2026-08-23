@@ -4,6 +4,7 @@
  *   A2 the title carries project identity, not a constant
  *   A3 iOS thread grouping is set on every branch, not only completions
  *   A6 errors get the same body budget and expanded style as completions
+ *   A4 progress notifications, the "is it still going?" signal
  */
 
 import { describe, it, expect } from "vitest";
@@ -300,5 +301,101 @@ describe("regressions guarded", () => {
       SERVER_URL,
     );
     expect(notification?.body).toBe("Approve edit (src/a.ts, src/b.ts)?");
+  });
+});
+
+describe("A4 progress notifications", () => {
+  const props = (extra: Record<string, unknown> = {}) => ({
+    sessionID: "ses_1",
+    title: "Migrate auth",
+    directory: "/home/dev/repos/miser",
+    elapsed: "1m 30s",
+    ...extra,
+  });
+
+  it("names the tool and how long it has been running", () => {
+    const notification = formatNotification(
+      { type: "session.progress", properties: props({ tool: "bash", toolTitle: "npm test" }) },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("bash · npm test -- running 1m 30s");
+  });
+
+  it("carries the project in the title and the session in the subtitle", () => {
+    // Same identity rule as A2: a notification that says only "Still working"
+    // is useless when two projects are running.
+    const notification = formatNotification(
+      { type: "session.progress", properties: props({ tool: "bash", toolTitle: "npm test" }) },
+      SERVER_URL,
+    );
+    expect(notification?.title).toBe("miser still working");
+    expect(notification?.subtitle).toBe("Migrate auth");
+  });
+
+  it("names a sub-agent's tool as one", () => {
+    const notification = formatNotification(
+      {
+        type: "session.progress",
+        properties: props({ tool: "grep", toolTitle: "callers", viaChild: true }),
+      },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("sub-agent · grep · callers -- running 1m 30s");
+  });
+
+  it("drops a tool title that just repeats the tool name", () => {
+    const notification = formatNotification(
+      { type: "session.progress", properties: props({ tool: "grep", toolTitle: "grep" }) },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("grep -- running 1m 30s");
+  });
+
+  it("falls back to the elapsed time when no tool was reported", () => {
+    const notification = formatNotification(
+      { type: "session.progress", properties: props() },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("Still working -- 1m 30s");
+  });
+
+  it("still says something with neither tool nor elapsed", () => {
+    const notification = formatNotification(
+      { type: "session.progress", properties: { sessionID: "ses_1", title: "Migrate auth" } },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("Still working");
+  });
+
+  it("delivers silently at normal priority", () => {
+    // An update on work you already know you started should be there when you
+    // look, not demand that you do.
+    const notification = formatNotification(
+      { type: "session.progress", properties: props({ tool: "bash" }) },
+      SERVER_URL,
+    );
+    expect(notification?.priority).toBe("normal");
+    expect(notification?.sound).toBeNull();
+  });
+
+  it("threads with the rest of the session, like every other kind", () => {
+    const notification = formatNotification(
+      { type: "session.progress", properties: props({ tool: "bash" }) },
+      SERVER_URL,
+    );
+    expect(notification?.ios?.threadId).toBe("ses_1");
+  });
+
+  it("is suppressed for a sub-agent's own session", () => {
+    // Children are filtered globally; a progress ping must not be the one kind
+    // that leaks them.
+    const notification = formatNotification(
+      {
+        type: "session.progress",
+        properties: props({ tool: "bash", parentSessionID: "ses_parent" }),
+      },
+      SERVER_URL,
+    );
+    expect(notification).toBeNull();
   });
 });

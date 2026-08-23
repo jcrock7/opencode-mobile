@@ -42,7 +42,8 @@ export async function sendPush(notification: Notification): Promise<void> {
 
   const messages = tokens.map(({ token, serverUrl }) => ({
     to: token,
-    sound: "default",
+    // Explicit null delivers silently; undefined keeps the audible default.
+    sound: notification.sound === undefined ? "default" : notification.sound,
     title: notification.title,
     ...(notification.subtitle && { subtitle: notification.subtitle }), // iOS subtitle
     body: notification.body,
@@ -50,7 +51,7 @@ export async function sendPush(notification: Notification): Promise<void> {
       ...notification.data,
       ...(serverUrl && { serverUrl }),
     },
-    priority: "high",
+    priority: notification.priority ?? "high",
     ...(notification.categoryId && { categoryId: notification.categoryId }),
     ...(notification.android && { android: notification.android }),
     ...(notification.ios && { ios: notification.ios }),
