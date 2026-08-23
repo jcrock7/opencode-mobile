@@ -48,6 +48,8 @@ interface Harness {
   scrollCalls: Array<[number, number]>;
   /** The inline height the script pinned on #root, or "" if it pinned none. */
   rootHeight(): string;
+  /** Every request the overlay made, with its headers. */
+  fetched: Array<{ url: string; headers: Record<string, string> }>;
   /** The injected titlebar button, if it mounted. */
   changesButton(): HTMLElement | null;
   /** One of upstream's own tab triggers. */
@@ -82,6 +84,8 @@ async function harness(
     scrolledBy?: number;
     withTabs?: boolean;
     changedFiles?: number;
+    /** Answer with data only for calls that name an instance, as OpenCode does. */
+    requireContext?: boolean;
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
@@ -136,9 +140,25 @@ async function harness(
 
   const sessions = options.sessions ?? SESSIONS;
   const statusMap = options.statusMap ?? { ses_a: { type: "idle" }, ses_b: { type: "idle" } };
-  w.fetch = vi.fn((url: string) => {
+  const fetched: Array<{ url: string; headers: Record<string, string> }> = [];
+  w.fetch = vi.fn((rawUrl: string, init?: { headers?: Record<string, string> }) => {
+    // Real fetch stringifies whatever it is given; the stub must too, or a test
+    // for odd input fails inside the stub rather than exercising the overlay.
+    const url = String(rawUrl);
+    fetched.push({ url, headers: (init?.headers as Record<string, string>) ?? {} });
+    // Only answer with data when the call is addressed the way the app
+    // addresses it. An un-addressed call reaches an instance that knows about
+    // nothing, which is what OpenCode really does -- 200 with an empty array.
+    const addressed =
+      options.requireContext !== true ||
+      url.includes("directory=") ||
+      !!(init?.headers as Record<string, string> | undefined)?.["x-opencode-directory"];
     const body = url.includes("/session/status") ? statusMap : sessions;
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(addressed ? body : []),
+    });
   });
 
   // happy-dom implements matchMedia but neither predicate we need.
@@ -217,6 +237,7 @@ async function harness(
     scrollCalls,
     rootHeight: () =>
       (doc.getElementById("root") as HTMLElement | null)?.style.getPropertyValue("height") ?? "",
+    fetched,
     changesButton: () => doc.querySelector("[data-oc-changes]") as HTMLElement | null,
     trigger: (value: string) =>
       doc.querySelector(`[data-slot="tabs-trigger"][data-value="${value}"]`) as HTMLElement | null,
@@ -1060,5 +1081,99 @@ describe("the changes button", () => {
 
     expect(h.changesButton()).not.toBeNull();
     expect(FakeEventSource.instances).toHaveLength(0);
+  });
+});
+
+describe("addressing the API the way the app does", () => {
+  // The bug this exists for: OpenCode resolves an instance per request from
+  // `?directory=` or `x-opencode-directory`, and on top of that there is a
+  // workspace/server proxy layer. A call naming none succeeds and returns
+  // nothing -- 200 with an empty array -- so it looks exactly like having no
+  // sessions. The v2 route encodes a server key, not a directory, so there is
+  // nothing in the URL to reconstruct it from. The only reliable source is the
+  // app's own calls.
+
+  it("starts with no context and reports it", async () => {
+    h = await harness({ config: { debug: true } });
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx none");
+  });
+
+  it("learns the query the app uses and reuses it", async () => {
+    h = await harness({ config: { debug: true } });
+    // The app makes a call of its own.
+    await (h.window as unknown as { fetch: typeof fetch }).fetch(
+      "/session?directory=%2Fhome%2Fdev%2Fmiser",
+    );
+    await h.flush();
+
+    const ours = h.fetched.filter((call) => call.url.startsWith("/session"));
+    expect(ours.some((call) => call.url.includes("directory=%2Fhome%2Fdev%2Fmiser"))).toBe(true);
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx ?directory=");
+  });
+
+  it("learns the directory header when the app sends one instead", async () => {
+    h = await harness();
+    await (h.window as unknown as { fetch: typeof fetch }).fetch("/session", {
+      headers: { "x-opencode-directory": "/home/dev/miser" },
+    });
+    await h.flush();
+
+    const ours = h.fetched.filter((call) => call.headers["x-opencode-directory"]);
+    expect(ours.some((call) => call.headers["x-opencode-directory"] === "/home/dev/miser")).toBe(true);
+  });
+
+  it("re-points the event stream at the learned context", async () => {
+    // The stream is the half the overlay could never fix by other means:
+    // EventSource cannot set a header, so the query is the only handle.
+    h = await harness();
+    await (h.window as unknown as { fetch: typeof fetch }).fetch(
+      "/session?directory=%2Fhome%2Fdev%2Fmiser",
+    );
+    await h.flush();
+
+    const urls = FakeEventSource.instances.map((es) => es.url);
+    expect(urls.some((url) => url.includes("directory=%2Fhome%2Fdev%2Fmiser"))).toBe(true);
+  });
+
+  it("finds the sessions it could not see before", async () => {
+    // End to end: with the server answering only addressed calls, the strip
+    // stays empty until the context is learned, then fills.
+    h = await harness({ requireContext: true, config: { debug: true } });
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("sess 0");
+
+    await (h.window as unknown as { fetch: typeof fetch }).fetch(
+      "/session?directory=%2Fhome%2Fdev%2Fmiser",
+    );
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("sess 2");
+  });
+
+  it("ignores a call that teaches nothing", async () => {
+    h = await harness({ config: { debug: true } });
+    await (h.window as unknown as { fetch: typeof fetch }).fetch("/session");
+    await h.flush();
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx none");
+  });
+
+  it("ignores calls to paths that are not the session API", async () => {
+    h = await harness({ config: { debug: true } });
+    await (h.window as unknown as { fetch: typeof fetch }).fetch("/config?directory=%2Fwrong");
+    await h.flush();
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx none");
+  });
+
+  it("leaves the app's own fetch working and untouched", async () => {
+    // Wrapping a global in someone else's app must be invisible to it.
+    h = await harness();
+    const res = await (h.window as unknown as { fetch: typeof fetch }).fetch("/session");
+    expect(res.status).toBe(200);
+  });
+
+  it("survives a fetch it cannot make sense of", async () => {
+    h = await harness();
+    const f = (h.window as unknown as { fetch: typeof fetch }).fetch;
+    await expect(f(undefined as unknown as string)).resolves.toBeDefined();
+    await expect(f({ weird: true } as unknown as string)).resolves.toBeDefined();
   });
 });

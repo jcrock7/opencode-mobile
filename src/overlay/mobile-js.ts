@@ -211,6 +211,92 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   /* ---------- api ---------- */
 
+  /* ---------- API context ----------
+
+     Guessing how to address OpenCode's API from the client is a losing game.
+     The server resolves an instance per request from '?directory=' or
+     'x-opencode-directory'; on top of that there is a workspace/server proxy
+     layer where 'GET /session' is answered locally while '/session/status' is
+     forwarded, and the v2 route names a SERVER KEY rather than a directory, so
+     there is nothing in the URL to reconstruct any of it from.
+
+     Plain '/session' therefore answered 200 with an empty array: a valid
+     request to an instance that knew about nothing. Nothing errors, so it looks
+     exactly like having no sessions.
+
+     Rather than guess, mirror the app. It is making the right calls already, so
+     tapping its fetch to learn the query string and directory header it uses
+     gets the overlay to the same instance by construction -- whatever kind of
+     server, workspace or sidecar is behind it. */
+  var apiSearch = "";
+  var apiDirectory = "";
+  var apiLearned = false;
+
+  function headerValue(init, name) {
+    if (!init || !init.headers) return "";
+    var h = init.headers;
+    if (typeof h.get === "function") return h.get(name) || "";
+    if (Array.isArray(h)) {
+      for (var i = 0; i < h.length; i++) {
+        if (h[i] && String(h[i][0]).toLowerCase() === name) return String(h[i][1] || "");
+      }
+      return "";
+    }
+    var keys = Object.keys(h);
+    for (var j = 0; j < keys.length; j++) {
+      if (keys[j].toLowerCase() === name) return String(h[keys[j]] || "");
+    }
+    return "";
+  }
+
+  /** Learn from one of the app's own API calls. */
+  function learnApiContext(url, init) {
+    if (typeof url !== "string" || url.indexOf("://") !== -1 && url.indexOf(window.location.origin) !== 0) return;
+    var path = url.charAt(0) === "/" ? url : url.slice(window.location.origin.length);
+    // Only the session endpoints: they are the ones whose instance we need, and
+    // matching narrowly keeps an unrelated call from teaching us nonsense.
+    if (path.indexOf("/session") !== 0 && path.indexOf("/event") !== 0) return;
+
+    var q = path.indexOf("?");
+    var search = q === -1 ? "" : path.slice(q);
+    var dir = headerValue(init, "x-opencode-directory");
+    // A call carrying neither teaches nothing.
+    if (!search && !dir) return;
+
+    var changed = search !== apiSearch || dir !== apiDirectory;
+    apiSearch = search;
+    apiDirectory = dir;
+    if (!changed && apiLearned) return;
+    apiLearned = true;
+    // Re-ask with the context we just learned, and re-point the stream at it.
+    renderDiag();
+    if (WANTS_DATA) {
+      refresh();
+      closeStream();
+      openStream();
+    }
+  }
+
+  function tapFetch() {
+    var native = window.fetch;
+    if (typeof native !== "function") return;
+    window.fetch = function (input, init) {
+      try {
+        var url = typeof input === "string" ? input : input && input.url;
+        learnApiContext(url, init || (input && input.headers ? input : null));
+      } catch (err) {
+        /* learning is best effort; never disturb the app's own request */
+      }
+      return native.apply(this, arguments);
+    };
+  }
+
+  /** A path with whatever addressing the app is using. */
+  function apiUrl(path) {
+    if (!apiSearch) return path;
+    return path + (path.indexOf("?") === -1 ? apiSearch : "&" + apiSearch.slice(1));
+  }
+
   function renderDiag() {
     if (!DEBUG) return;
     var route = routeParts();
@@ -222,7 +308,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
       " | sse " + diagStreamState + "/" + diagEvents + " " + diagLastEvent +
       " | st " + (id && status[id] ? status[id] : "-") +
       " | att " + (id && attention[id] ? attention[id] : "-") +
-      " | bar " + (statusEl ? (statusEl.hidden ? "hidden" : "shown") : "unmounted");
+      " | bar " + (statusEl ? (statusEl.hidden ? "hidden" : "shown") : "unmounted") +
+      " | ctx " + (apiLearned ? (apiSearch || "hdr") : "none");
     if (line === diagLast) return;
     diagLast = line;
     if (!diagEl || !diagEl.isConnected) {
@@ -234,8 +321,11 @@ export function buildOverlayJs(config: OverlayConfig): string {
   }
 
   function getJson(path) {
-    return fetch(path, {
-      headers: { accept: "application/json" },
+    var headers = { accept: "application/json" };
+    // Whatever the app is using to address the API, use the same.
+    if (apiDirectory) headers["x-opencode-directory"] = apiDirectory;
+    return fetch(apiUrl(path), {
+      headers: headers,
       credentials: "same-origin",
       cache: "no-store"
     }).then(function (res) {
@@ -889,7 +979,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   function openStream() {
     if (stream || typeof window.EventSource === "undefined") return;
     try {
-      stream = new window.EventSource("/event", { withCredentials: true });
+      stream = new window.EventSource(apiUrl("/event"), { withCredentials: true });
     } catch (err) {
       stream = null;
       return;
@@ -1042,6 +1132,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
   });
 
   function boot() {
+    // Installed before the first refresh so the app's own early calls are seen.
+    try { tapFetch(); } catch (err) { /* never break the host page */ }
     // The keyboard fix is a layout repair, not a feature of the strip, so it
     // runs whatever else is switched off -- and at every width, since it
     // decides for itself when it applies.

@@ -639,9 +639,20 @@ describe("overlay assets", () => {
       const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
       expect(js).toContain('getJson("/session")');
       expect(js).toContain('getJson("/session/status")');
-      expect(js).toContain('EventSource("/event"');
+      // Addressed through apiUrl() so the call reaches the same OpenCode
+      // instance the app is using; the endpoint itself is still /event.
+      expect(js).toContain('EventSource(apiUrl("/event")');
       expect(js).not.toContain('method: "POST"');
       expect(js).not.toContain('method: "DELETE"');
+    });
+
+    it("never writes through the fetch it wraps", () => {
+      // The overlay taps window.fetch to learn how the app addresses the API.
+      // That wrapper delegates and must never originate a request of its own,
+      // let alone a mutating one.
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      expect(js).toContain("return native.apply(this, arguments);");
+      expect(js).not.toMatch(/native\s*\(\s*["']/);
     });
 
     it("reflects each switch independently", () => {

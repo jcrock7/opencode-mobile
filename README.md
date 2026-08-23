@@ -942,6 +942,35 @@ cloudflared`, or Cloudflare's apt/yum repo), not through npm.
 
 ### The session strip and status bar were always empty
 
+Fixed, and worth reading because the failure is silent by construction.
+
+Addressing OpenCode's API from the client is not something you can work out from
+the URL. The server resolves an instance per request from `?directory=` or
+`x-opencode-directory`; on top of that sits a workspace/server proxy layer where
+`GET /session` is answered locally while `/session/status` is forwarded; and the
+v2 route encodes a **server key**, not a directory, so there is nothing in the
+path to reconstruct any of it from.
+
+So the overlay's plain `GET /session` answered **200 with an empty array** -- a
+valid request to an instance that knew about nothing -- and its event stream
+stayed open delivering only `server.heartbeat`. Nothing errored. A misrouted call
+looks exactly like an empty account, which is why everything the overlay renders
+from live data was permanently blank: no session strip (it hides below two
+sessions and was seeing zero), no status bar, and no amber "needs you".
+
+Rather than guess, the overlay now **mirrors the app**. It wraps `window.fetch`
+once, watches for the app's own calls to the session endpoints, and learns the
+query string and directory header they carry. Its own requests -- and its event
+stream, whose URL is the only handle it has, since `EventSource` cannot set a
+header -- then use exactly the same addressing. That reaches the right instance
+by construction, whatever server, workspace or sidecar is behind it, and it keeps
+working if upstream changes how addressing is done.
+
+The wrapper only ever delegates; a test asserts it never originates a request of
+its own. The `ctx` field in the debug readout shows what it learned.
+
+### The old symptom, kept for reference
+
 Fixed, but worth knowing because it explains a whole class of symptom.
 
 OpenCode's server is **instance-per-request**: it works out which project a call
@@ -976,7 +1005,8 @@ route ses_abc123 | sess 2 | list 200 | sse open/47 message.part.updated | st bus
 | Field | Means | If it reads |
 |---|---|---|
 | `route` | the session id parsed out of the URL | `NONE` -- the URL shape is not one the overlay recognises, so the status bar can never show |
-| `sess` | sessions the overlay's own `GET /session` returned | `0` or fewer than you have open -- the request is reaching a different OpenCode *instance* than the app is using; instances are keyed per directory |
+| `sess` | sessions the overlay's own `GET /session` returned | `0` or fewer than you have open -- the request is reaching a different OpenCode *instance* than the app is using |
+| `ctx` | the addressing learned from the app's own calls | `none` -- the app has not made a session call yet, or stopped carrying one; the overlay is querying unaddressed and will see nothing |
 | `list` | HTTP status of that request | not `200` -- the endpoint is refusing it |
 | `sse` | event-stream state / events received / last type | `error/0` or `open/0` -- no events are arriving, so nothing live can work |
 | `st` | the status map entry for this session | `-` while the session is clearly working -- `GET /session/status` is not answering for this instance |

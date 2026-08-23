@@ -381,14 +381,16 @@ signals.forEach((signal) => {
     already right-aligned it. Adding a box produced a bubble inside a bubble.
     Read the component's own CSS before styling a container around it; the
     overlay's job is usually to adjust what exists, not to add a layer.
-27. **Every Call To OpenCode Must Name Its Instance**: the server is
-    instance-per-request and resolves the project from `?directory=` or
-    `x-opencode-directory`. A request with neither succeeds and returns nothing
-    -- 200 with an empty array, an event stream carrying only heartbeats -- so
-    the failure looks like an empty account rather than a misrouted call. The
-    proxy adds a default for anything that names none, `forwardUpgrade`
-    included, since `EventSource` cannot set headers. Never override a
-    directory the caller chose.
+27. **Mirror The App's API Addressing, Never Derive It**: a call to OpenCode
+    must name its instance (`?directory=` or `x-opencode-directory`), and on top
+    of that sits a workspace/server proxy layer where `GET /session` is local
+    while `/session/status` forwards. The v2 route encodes a server key, not a
+    directory, so the client cannot reconstruct it. A request naming none
+    succeeds and returns nothing -- 200 with an empty array, a stream of
+    heartbeats -- so the failure looks like an empty account, not a misrouted
+    call. The overlay taps `window.fetch` to learn the addressing the app is
+    already using and reuses it verbatim, event-stream URL included. Do not
+    reintroduce a guess; the proxy's default is only a backstop.
 28. **OpenCode Ships Two Event Schemas**: `packages/schema/src/` is current,
     `packages/schema/src/v1/` is the old one, and names differ in both the event
     and its fields -- `permission.v2.asked {action, resources}` versus
