@@ -15,6 +15,80 @@
 import type { OverlayConfig } from "./types";
 
 export function buildOverlayCss(config: OverlayConfig): string {
+  /**
+   * Three tiers for the transcript.
+   *
+   * Upstream renders your prompt, the agent's prose and every tool row at the
+   * same weight, in the same colour, down the same full-width column. On a
+   * phone that reads as one undifferentiated wall of text -- you cannot tell
+   * where your message ended and the answer began, and a shell command looks
+   * exactly like a sentence.
+   *
+   * The hooks are `data-timeline-row`, which upstream sets to the row's own tag
+   * (UserMessage / AssistantPart / Thinking / Error / Retry / DiffSummary /
+   * TurnGap / TurnDivider / CommentStrip), and `data-component="tool-trigger"`
+   * for a tool row.
+   *
+   * A note on the rail: it is a `border-left` on each assistant row rather than
+   * one border on a container, because there is no element wrapping a whole
+   * response. That works because the row frame carries its own `pt-3` between
+   * consecutive assistant parts, so the borders butt together into a
+   * continuous line -- and normal turns are separated by a `TurnGap` row, which
+   * has no border, so the rail breaks exactly at the turn boundary.
+   */
+  const bubbles = config.bubbles
+    ? `
+/* ---- transcript tiers (OPENCODE_MOBILE_OVERLAY_BUBBLES=0 to disable) -------- */
+@media (max-width: ${config.maxWidth}px) {
+  /* 1. Your message: a bubble, inset from the right so it reads as yours.
+        The squared bottom-right corner is the tail -- an asymmetric radius
+        rather than a pseudo-element triangle, which would have to know the
+        bubble's background and would break on a theme change. */
+  [data-timeline-row="UserMessage"] [data-slot="session-turn-message-content"] {
+    margin-left: auto !important;
+    max-width: 88% !important;
+    padding: 10px 12px !important;
+    border-radius: 14px 14px 4px 14px !important;
+    background: var(--v2-background-bg-layer-02, rgba(127, 127, 127, 0.14)) !important;
+    box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted, rgba(127, 127, 127, 0.28)) !important;
+  }
+
+  /* 2. The response: full width -- prose, code and diffs all need the room --
+        but railed, so the whole answer reads as one channel. */
+  [data-timeline-row="AssistantPart"],
+  [data-timeline-row="Thinking"],
+  [data-timeline-row="DiffSummary"],
+  [data-timeline-row="Error"],
+  [data-timeline-row="Retry"] {
+    border-left: 2px solid var(--v2-border-border-muted, rgba(127, 127, 127, 0.28)) !important;
+  }
+  /* The rail eats 2px; give it back rather than letting the text shift. */
+  [data-timeline-row="AssistantPart"] [data-slot="session-turn-message-container"],
+  [data-timeline-row="Thinking"] [data-slot="session-turn-message-container"] {
+    padding-left: 10px !important;
+  }
+  /* A problem is worth colouring; nothing else is. */
+  [data-timeline-row="Error"],
+  [data-timeline-row="Retry"] {
+    border-left-color: #e4695d !important;
+  }
+
+  /* 3. Tool rows: machinery, not prose. Demoted to a subdued card so the eye
+        can skip them when reading and find them when scanning. */
+  [data-component="tool-trigger"] {
+    border-radius: 8px !important;
+    padding: 6px 8px !important;
+    background: var(--v2-background-bg-layer-01, rgba(127, 127, 127, 0.07)) !important;
+  }
+
+  /* Thinking is the least of the three; make it look it. */
+  [data-timeline-row="Thinking"] {
+    opacity: 0.75 !important;
+  }
+}
+`
+    : "";
+
   const debugBadge = config.debug
     ? `
 /* ---- debug badge (OPENCODE_MOBILE_OVERLAY_DEBUG=1) --------------------------
@@ -575,5 +649,5 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-oc-chip][data-oc-state="attention"] { color: #e0925d; background: rgba(224, 146, 93, 0.16); }
   [data-oc-chip][data-oc-state="error"]     { color: #e4695d; background: rgba(228, 105, 93, 0.16); }
 }
-${debugBadge}`;
+${bubbles}${debugBadge}`;
 }

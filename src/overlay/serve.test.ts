@@ -4,7 +4,7 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, maxWidth: 767, debug: false };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, maxWidth: 767, debug: false };
 
 /** Remove every balanced @media block, leaving only unconditional rules. */
 function stripMediaBlocks(css: string): string {
@@ -177,6 +177,86 @@ describe("overlay assets", () => {
       expect(css).toMatch(
         /\[data-component="prompt-input-v2"\] \[data-component="icon-button"\][\s\S]{0,600}min-width: 0 !important/,
       );
+    });
+
+    it("gives your message a bubble, inset from the right", () => {
+      // The single strongest "this is mine" signal, and what makes the answer
+      // legible as a separate thing.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-timeline-row="UserMessage"]');
+      expect(css).toMatch(
+        /\[data-timeline-row="UserMessage"\][\s\S]{0,300}margin-left: auto !important/,
+      );
+      // Asymmetric radius is the tail; a pseudo-element triangle would have to
+      // know the bubble's background and break on a theme change.
+      expect(css).toContain("border-radius: 14px 14px 4px 14px !important");
+    });
+
+    it("rails the response rather than boxing each part", () => {
+      // There is no element wrapping a whole response, so the rail is a
+      // border-left per row. Consecutive assistant rows butt together into a
+      // continuous line; a TurnGap row has no border, so it breaks at the turn.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      for (const tag of ["AssistantPart", "Thinking", "DiffSummary", "Error", "Retry"]) {
+        expect(css).toContain(`[data-timeline-row="${tag}"]`);
+      }
+      expect(css).toMatch(/border-left: 2px solid/);
+      // Never on the user's row -- that would rail the bubble too.
+      expect(css).not.toMatch(
+        /\[data-timeline-row="UserMessage"\],[\s\S]{0,200}border-left: 2px/,
+      );
+    });
+
+    it("keeps the response full width", () => {
+      // Prose, code and diffs all need the room; only the user's bubble is
+      // inset. A max-width on the assistant rows would undo the scrollable
+      // code work.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).not.toMatch(
+        /\[data-timeline-row="AssistantPart"\][\s\S]{0,300}max-width:/,
+      );
+    });
+
+    it("colours only the rows that are actually a problem", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-timeline-row="Error"\],\s*\n\s*\[data-timeline-row="Retry"\]\s*\{[^}]*border-left-color/,
+      );
+    });
+
+    it("demotes tool rows to a subdued card", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-component="tool-trigger"\]\s*\{[^}]*background: var\(--v2-background-bg-layer-01/,
+      );
+    });
+
+    it("uses upstream's own theme tokens, so both themes work", () => {
+      // Hard-coded colours would look wrong in the light theme, which the
+      // overlay has no way to detect from a stylesheet.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain("var(--v2-background-bg-layer-02");
+      expect(css).toContain("var(--v2-border-border-muted");
+    });
+
+    it("omits the tiers entirely when switched off", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, bubbles: false })!.body;
+      // The row hooks are used by nothing else, so they go completely.
+      expect(css).not.toContain("data-timeline-row");
+      expect(css).not.toContain("border-left: 2px solid");
+      // tool-trigger stays: the un-truncation rules use it too, and those are
+      // not part of this switch.
+      expect(css).toContain('[data-component="tool-trigger"]');
+      expect(css).not.toMatch(
+        /\[data-component="tool-trigger"\]\s*\{[^}]*background: var\(--v2-background-bg-layer-01/,
+      );
+    });
+
+    it("rebuilds the asset when only the tiers change", () => {
+      const on = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!;
+      const off = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, bubbles: false })!;
+      expect(off.body).not.toBe(on.body);
+      expect(off.etag).not.toBe(on.etag);
     });
 
     it("collapses the bottom safe-area inset while the keyboard is open", () => {

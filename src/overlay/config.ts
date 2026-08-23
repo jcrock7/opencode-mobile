@@ -19,6 +19,7 @@ const DEFAULT_CONFIG: OverlayConfig = {
   sessionStrip: true,
   statusBar: true,
   keyboardViewport: true,
+  bubbles: true,
   maxWidth: DEFAULT_MAX_WIDTH,
   debug: false,
 };
@@ -56,6 +57,7 @@ export function loadOverlayConfig(env: NodeJS.ProcessEnv = process.env): Overlay
     sessionStrip: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_STRIP),
     statusBar: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_STATUS),
     keyboardViewport: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_KEYBOARD),
+    bubbles: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_BUBBLES),
     maxWidth: maxWidth ?? DEFAULT_CONFIG.maxWidth,
     debug: isEnabled(env.OPENCODE_MOBILE_OVERLAY_DEBUG),
   };

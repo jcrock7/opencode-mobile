@@ -370,7 +370,13 @@ signals.forEach((signal) => {
     ambiguous when two causes predict a similar gap. The debug readout
     (`OPENCODE_MOBILE_OVERLAY_DEBUG=1`) exists so the phone reports the numbers;
     extend it rather than re-deriving them.
-25. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+25. **Colour And Depth Come From Upstream's Tokens**: use `var(--v2-*)` with a
+    neutral fallback, never a hard-coded hex, for anything that sits on the
+    app's own surfaces. The overlay cannot detect the active theme from a
+    stylesheet, so a literal colour is wrong in one of them. The strip's state
+    colours are the deliberate exception -- they carry meaning, and they are
+    paired with a `prefers-color-scheme` block.
+26. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

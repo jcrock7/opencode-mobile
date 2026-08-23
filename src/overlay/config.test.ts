@@ -17,6 +17,7 @@ describe("overlay config", () => {
         sessionStrip: true,
         statusBar: true,
         keyboardViewport: true,
+        bubbles: true,
         maxWidth: DEFAULT_MAX_WIDTH,
         debug: false,
       });
@@ -28,6 +29,14 @@ describe("overlay config", () => {
 
     it.each(["1", "true", "on", "yes", ""])("leaves the overlay enabled for %s", (value) => {
       expect(loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY: value }).enabled).toBe(true);
+    });
+
+    it("disables only the transcript tiers independently", () => {
+      const config = loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY_BUBBLES: "0" });
+      expect(config.enabled).toBe(true);
+      expect(config.sessionStrip).toBe(true);
+      expect(config.keyboardViewport).toBe(true);
+      expect(config.bubbles).toBe(false);
     });
 
     it("disables only the keyboard viewport fix independently", () => {

@@ -21,6 +21,7 @@ const CONFIG: OverlayConfig = {
   sessionStrip: true,
   statusBar: true,
   keyboardViewport: true,
+  bubbles: true,
   maxWidth: 767,
   debug: false,
 };

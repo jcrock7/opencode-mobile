@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 636 tests with an enforced 85% coverage threshold
+- Test suite grown to 645 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -339,6 +339,26 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   inset iOS is actually claiming, and the scroll offsets. Two rounds of this
   were diagnosed by measuring gaps off a screenshot in pixels, which is slow and
   picks the wrong answer when two explanations predict a similar gap.
+- **Separates your message from the answer.** Upstream renders your prompt, the
+  agent's prose and every tool row at the same weight, in the same colour, down
+  the same full-width column -- on a phone that reads as one wall of text, where
+  a shell command looks exactly like a sentence. Three tiers instead:
+  **your message** becomes a bubble inset from the right (the squared
+  bottom-right corner is the tail -- an asymmetric radius rather than a
+  pseudo-element triangle, which would have to know the bubble's background and
+  break on a theme change); **the response** stays full width, because prose,
+  code and diffs all need the room, but gains a rail down its left edge so the
+  whole answer reads as one channel; **tool rows** are demoted to a subdued card
+  so the eye can skip them when reading and find them when scanning. Errors and
+  retries get a red rail; nothing else is coloured. All of it uses upstream's own
+  `--v2-*` theme tokens, so it follows the light and dark themes rather than
+  guessing. Off with `OPENCODE_MOBILE_OVERLAY_BUBBLES=0`.
+
+  The rail is a `border-left` on each assistant row rather than one border on a
+  container, because no element wraps a whole response. It works because the row
+  frame carries its own `pt-3` between consecutive assistant parts, so the
+  borders butt into a continuous line -- and normal turns are separated by a
+  `TurnGap` row, which has no border, so the rail breaks exactly at the turn.
 - **Surfaces sub-agent work.** Child sessions are what a sub-agent runs in, and
   they used to show nowhere at all on a phone: not in the strip (excluded by
   design) and not in notifications (suppressed by design). The status bar was
@@ -634,6 +654,7 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STATUS` | "Now running" status bar. `0` disables it | enabled |
+| `OPENCODE_MOBILE_OVERLAY_BUBBLES` | Three visual tiers in the transcript: your message as a bubble, the response railed, tool rows demoted. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_KEYBOARD` | Pin the shell to the visual viewport so the keyboard cannot push the layout off screen. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
 | `OPENCODE_MOBILE_OVERLAY_DEBUG` | `1` shows a badge on the page proving the overlay is applied | off |

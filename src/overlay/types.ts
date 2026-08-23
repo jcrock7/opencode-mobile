@@ -35,6 +35,16 @@ export interface OverlayConfig {
    * no CSS unit for it on iOS.
    */
   keyboardViewport: boolean;
+  /**
+   * Give the transcript three visual tiers instead of one wall of text.
+   *
+   * Upstream renders your prompt, the agent's prose and every tool row in the
+   * same weight and colour on the same full-width column, so on a phone a
+   * session reads as undifferentiated text. This separates them: your message
+   * becomes a right-inset bubble, the response gets a continuous rail, and tool
+   * rows are demoted to subdued cards.
+   */
+  bubbles: boolean;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
   /**
