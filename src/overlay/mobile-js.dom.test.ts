@@ -661,6 +661,62 @@ describe("the keyboard viewport", () => {
   });
 });
 
+describe("the diagnostic readout", () => {
+  // Three rounds of this were spent inferring which gate the status bar was
+  // failing at, from screenshots that could not show any of them. Every gate
+  // between "the script runs" and "the bar is on screen" is now reported.
+  it("renders nothing unless debug is on", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    expect(h.document.querySelector("[data-oc-diag]")).toBeNull();
+  });
+
+  it("reports the parsed route, the session count and the list result", async () => {
+    h = await harness({ config: { debug: true }, statusMap: { ses_a: { type: "busy" } } });
+    const line = h.document.querySelector("[data-oc-diag]")?.textContent ?? "";
+    expect(line).toContain("route ses_a");
+    expect(line).toContain("sess 2");
+    expect(line).toContain("list 200");
+  });
+
+  it("reports the stream state and what it last received", async () => {
+    h = await harness({ config: { debug: true }, statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart());
+    await h.flush();
+
+    const line = h.document.querySelector("[data-oc-diag]")?.textContent ?? "";
+    expect(line).toContain("message.part.updated");
+    expect(line).toMatch(/sse \w+\/[1-9]/);
+  });
+
+  it("reports the status and whether the bar is on screen", async () => {
+    h = await harness({ config: { debug: true }, statusMap: { ses_a: { type: "busy" } } });
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("st busy");
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("bar shown");
+  });
+
+  it("says the bar is hidden, and why, for an idle session", async () => {
+    // The exact case that produced "still nothing" with no way to tell which
+    // gate closed.
+    h = await harness({ config: { debug: true } });
+    const line = h.document.querySelector("[data-oc-diag]")?.textContent ?? "";
+    expect(line).toContain("st idle");
+    expect(line).toContain("bar hidden");
+  });
+
+  it("reports a pending question as attention", async () => {
+    h = await harness({ config: { debug: true }, statusMap: { ses_a: { type: "busy" } } });
+    h.emit({ type: "question.asked", properties: { sessionID: "ses_a", id: "que_1" } });
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("att question");
+  });
+
+  it("reports a route it could not parse", async () => {
+    h = await harness({ config: { debug: true }, path: "/somewhere/else" });
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("route NONE");
+  });
+});
+
 describe("blocked on a human", () => {
   // Both kinds stop the session dead. The status bar is the only on-screen
   // signal the overlay controls, and it has to say which is wanted.

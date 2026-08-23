@@ -940,6 +940,29 @@ binary is unused either way.
 Install `cloudflared` itself with your system package manager (`brew install
 cloudflared`, or Cloudflare's apt/yum repo), not through npm.
 
+### The overlay is running but a feature is missing
+
+`OPENCODE_MOBILE_OVERLAY_DEBUG=1` puts a purple line at the foot of the screen
+reporting every gate between "the script is running" and "the feature is on
+screen":
+
+```
+route ses_abc123 | sess 2 | list 200 | sse open/47 message.part.updated | st busy | att - | bar shown
+```
+
+| Field | Means | If it reads |
+|---|---|---|
+| `route` | the session id parsed out of the URL | `NONE` -- the URL shape is not one the overlay recognises, so the status bar can never show |
+| `sess` | sessions the overlay's own `GET /session` returned | `0` or fewer than you have open -- the request is reaching a different OpenCode *instance* than the app is using; instances are keyed per directory |
+| `list` | HTTP status of that request | not `200` -- the endpoint is refusing it |
+| `sse` | event-stream state / events received / last type | `error/0` or `open/0` -- no events are arriving, so nothing live can work |
+| `st` | the status map entry for this session | `-` while the session is clearly working -- `GET /session/status` is not answering for this instance |
+| `att` | a pending permission or question | `-` while the PC is showing a prompt -- the blocking event is not reaching this client |
+| `bar` | whether the status bar element is mounted and visible | `unmounted` -- no anchor was found to mount it against |
+
+That line distinguishes the failures that look identical from outside. It is the
+first thing to capture when something the overlay renders does not appear.
+
 ### Is the overlay actually applied?
 
 Most of what the overlay changes is either subtle (14px prose to 16px) or only

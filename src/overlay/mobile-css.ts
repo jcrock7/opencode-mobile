@@ -671,6 +671,21 @@ export function buildOverlayCss(config: OverlayConfig): string {
 /* ---- keyboard debug readout ------------------------------------------------
    Rendered by overlay.js only when OPENCODE_MOBILE_OVERLAY_DEBUG=1. Styled
    unconditionally so it is never an unstyled string across the screen. */
+[data-oc-diag] {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  z-index: 2147483647 !important;
+  padding: 3px 6px !important;
+  background: #7a2f8a !important;
+  color: #ffffff !important;
+  font: 600 9px/1.35 ui-monospace, "SF Mono", Menlo, monospace !important;
+  word-break: break-all !important;
+  text-align: center !important;
+  pointer-events: none !important;
+}
+
 [data-oc-kbdebug] {
   position: fixed !important;
   left: 0 !important;

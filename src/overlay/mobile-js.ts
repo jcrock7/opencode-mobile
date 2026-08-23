@@ -199,8 +199,39 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var retryCount = 0;
   var listFailed = false;
   var mounted = false;
+  // Diagnostics, rendered only under OPENCODE_MOBILE_OVERLAY_DEBUG=1. Every
+  // gate between "the script is running" and "the bar is on screen" is one of
+  // these, and none of them is visible from outside.
+  var diagEl = null;
+  var diagLast = "";
+  var diagListStatus = "-";
+  var diagStreamState = "init";
+  var diagEvents = 0;
+  var diagLastEvent = "-";
 
   /* ---------- api ---------- */
+
+  function renderDiag() {
+    if (!DEBUG) return;
+    var route = routeParts();
+    var id = (route && route.current) || "";
+    var line =
+      "route " + (id ? id.slice(0, 12) : "NONE") +
+      " | sess " + sessions.length +
+      " | list " + diagListStatus +
+      " | sse " + diagStreamState + "/" + diagEvents + " " + diagLastEvent +
+      " | st " + (id && status[id] ? status[id] : "-") +
+      " | att " + (id && attention[id] ? attention[id] : "-") +
+      " | bar " + (statusEl ? (statusEl.hidden ? "hidden" : "shown") : "unmounted");
+    if (line === diagLast) return;
+    diagLast = line;
+    if (!diagEl || !diagEl.isConnected) {
+      diagEl = document.createElement("div");
+      diagEl.setAttribute("data-oc-diag", "");
+      document.body.appendChild(diagEl);
+    }
+    diagEl.textContent = line;
+  }
 
   function getJson(path) {
     return fetch(path, {
@@ -208,6 +239,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       credentials: "same-origin",
       cache: "no-store"
     }).then(function (res) {
+      if (path === "/session") diagListStatus = String(res.status);
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json();
     });
@@ -511,6 +543,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     var id = route && route.current;
     if (!id) {
       statusEl.hidden = true;
+      renderDiag();
       return;
     }
 
@@ -542,9 +575,11 @@ export function buildOverlayJs(config: OverlayConfig): string {
       // Idle sessions get no bar: a permanent "idle" line is just a row of
       // wasted screen on a phone.
       statusEl.hidden = true;
+      renderDiag();
       return;
     }
 
+    renderDiag();
     statusEl.setAttribute("data-oc-state", "busy");
     var live = liveFor(id);
     if (text) text.textContent = type === "retry" ? "Retrying" : runningLabel(live);
@@ -735,6 +770,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (results[1] !== null) status = results[1];
       render();
       renderStatus();
+      renderDiag();
     });
   }
 
@@ -859,7 +895,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       return;
     }
 
-    stream.onopen = function () { retryCount = 0; };
+    stream.onopen = function () { retryCount = 0; diagStreamState = "open"; renderDiag(); };
 
     stream.onmessage = function (message) {
       var payload = null;
@@ -868,15 +904,20 @@ export function buildOverlayJs(config: OverlayConfig): string {
       } catch (err) {
         return;
       }
+      diagEvents++;
+      if (payload && typeof payload.type === "string") diagLastEvent = payload.type;
       try {
         handleEvent(payload);
       } catch (err) {
         /* never let a malformed event break the page */
       }
+      renderDiag();
     };
 
     stream.onerror = function () {
       closeStream();
+      diagStreamState = "error";
+      renderDiag();
       if (!active()) return;
       // Tunnels drop and iOS suspends background tabs; back off rather than
       // hammering on reconnect.
