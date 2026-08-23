@@ -258,6 +258,42 @@ export function buildOverlayCss(config: OverlayConfig): string {
     border-radius: inherit !important;
   }
 
+  /* 7c. The project and session lists -- the drawer you pick a session from.
+         Upstream sizes these for a mouse: a project row is 28px (h-7) and a
+         session row 40px (h-10). Each also carries absolutely-positioned
+         trailing actions, a menu and an edit button, which are IconButtonV2 and
+         so were already grown to 44px by the floor above. In a 28px row that
+         leaves them overflowing 8px top and bottom onto their neighbours, where
+         a tap near a row edge can hit the wrong row's pencil. Growing the rows
+         fixes the target size and that overflow together.
+
+         The wrapper has to grow with the button. Each row is a 'relative' div
+         whose child button is the same fixed height, so raising only the child
+         makes it overflow its own wrapper -- the mistake that put the send
+         button on top of the variant control. The trailing actions are centred
+         with 'top: 50%' and a translate, so they re-centre for free.
+
+         Wrapper and button share one rule deliberately. A selector list is not
+         forgiving: if :has() is unavailable the whole rule drops, so the button
+         cannot grow without its wrapper. Degrading to upstream's own sizing is
+         fine; degrading to a button overflowing its row is not.
+
+         Left alone: the search field and the sticky group headers. Those are
+         placed with hand-tuned pixel offsets derived from the search box's
+         height ('top: 84px', 'calc(100cqh - 84px)'), so growing it would
+         misalign every sticky header in the list. */
+  [data-component="home-project-row"],
+  [data-component="home-recently-closed-row"],
+  [data-component="home-session-row"],
+  [data-component="home-session-search-row"],
+  div:has(> [data-component="home-project-row"]),
+  div:has(> [data-component="home-recently-closed-row"]),
+  div:has(> [data-component="home-session-row"]),
+  div:has(> [data-component="home-session-search-row"]) {
+    height: auto !important;
+    min-height: 44px !important;
+  }
+
   /* 8. Make the glyphs bigger too, so a 44px button is not mostly empty.
         Scoped to direct icon children of these controls, so it cannot resize
         an icon that is deliberately sized elsewhere (the progress spinner, a

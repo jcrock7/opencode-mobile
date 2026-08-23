@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 517 tests with an enforced 85% coverage threshold
+- Test suite grown to 520 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -325,6 +325,19 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   only at phone widths -- in a browser tab Safari's own toolbar moves the visual
   viewport for reasons that have nothing to do with the keyboard. Switch off
   with `OPENCODE_MOBILE_OVERLAY_KEYBOARD=0`.
+- **Grows the project and session rows in the drawer**, the list you actually
+  pick a session from. Upstream sizes them for a mouse -- a project row is 28px,
+  a session row 40px -- and each carries absolutely-positioned trailing actions
+  (a menu, an edit button) which the touch-target rule above had already grown
+  to 44px. Inside a 28px row those overflowed 8px onto the rows above and below,
+  so a tap near a row edge could hit the wrong row's pencil; growing the rows
+  fixes the target size and that overflow together. Each row's wrapper grows in
+  the same rule, both because a fixed-height wrapper would otherwise clip its
+  own button and because a selector list is not forgiving -- where `:has()` is
+  unavailable the whole rule drops, which is the safe way to fail. The search
+  field and the sticky group headers are deliberately untouched: their geometry
+  is hand-tuned pixel offsets derived from the search box's height, so growing
+  it would misalign every sticky header in the list.
 - **Grows the composer's tap areas without growing its boxes.** The composer's
   control row is the one place a size floor does harm: it is a fixed 44px box
   holding the attach, model, variant and send controls on a single line, inside a

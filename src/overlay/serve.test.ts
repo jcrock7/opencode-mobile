@@ -179,6 +179,42 @@ describe("overlay assets", () => {
       );
     });
 
+    it("grows the project and session rows you pick a session from", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      for (const row of [
+        "home-project-row",
+        "home-recently-closed-row",
+        "home-session-row",
+        "home-session-search-row",
+      ]) {
+        expect(css).toContain(`[data-component="${row}"]`);
+      }
+    });
+
+    it("grows each row's wrapper with it, in the same rule", () => {
+      // Each row is a fixed-height div wrapping a button of the same height, so
+      // raising only the button makes it overflow its own wrapper. And a
+      // selector list is not forgiving: sharing one rule means that where
+      // :has() is unavailable the whole thing drops, rather than leaving the
+      // button grown and the wrapper not.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      const rule = /\[data-component="home-project-row"\][\s\S]*?\}/.exec(css)?.[0] ?? "";
+      expect(rule).toContain('div:has(> [data-component="home-project-row"])');
+      expect(rule).toContain('div:has(> [data-component="home-session-row"])');
+      expect(rule).toContain("min-height: 44px !important");
+      // height: auto as well -- the wrappers set an explicit h-7 / h-10.
+      expect(rule).toContain("height: auto !important");
+    });
+
+    it("leaves the session search field and sticky headers alone", () => {
+      // Their geometry is hand-tuned pixel offsets derived from the search
+      // box's height, so growing it misaligns every sticky group header.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).not.toContain('[data-component="home-session-search"]');
+      expect(css).not.toContain('[data-component="home-session-search-panel"]');
+      expect(css).not.toContain('[data-component="home-session-scroll-track"]');
+    });
+
     it("grows the composer tap areas without growing their boxes", () => {
       // An inset pseudo-element gives 44pt of touch with zero layout change --
       // the only way to do it in a width-constrained row.
