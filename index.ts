@@ -992,7 +992,13 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
         eventType === "session.idle" ||
         eventType === "session.error" ||
         eventType === "permission.updated" ||
-        eventType === "permission.asked"
+        eventType === "permission.asked" ||
+        // The current schema emits permission.v2.asked; permission.asked is the
+        // v1 name and permission.updated does not exist in either. Filtering on
+        // the old names only meant a permission request -- the one event that
+        // BLOCKS the session until a human answers -- sent no notification at
+        // all against any recent OpenCode.
+        eventType === "permission.v2.asked"
       ) {
         // Debug: Log event structure to diagnose child session detection
         if (DEBUG_ENABLED && eventType === "session.idle") {
@@ -1019,10 +1025,18 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
         if (sessionID && typeof statusType === "string") {
           progress.onStatus(sessionID, statusType);
         }
-      } else if (eventType === "session.idle" || eventType === "session.error") {
+      } else if (
+        eventType === "session.idle" ||
+        eventType === "session.error" ||
+        eventType === "permission.asked" ||
+        eventType === "permission.v2.asked"
+      ) {
         const sessionID = extractSessionIdFromEvent(event);
         // The session has already notified about stopping; anything still
-        // armed for it is now a notification about work that is over.
+        // armed for it is now a notification about work that is over. A
+        // permission request counts too: the session is not working, it is
+        // waiting on a human, and "still working" would be a lie -- the
+        // permission notification is the one that should arrive.
         if (sessionID) progress.onSettled(sessionID);
       } else if (eventType === "message.part.updated") {
         // Far too frequent to notify on, cheap to record. Whatever is running

@@ -399,3 +399,96 @@ describe("A4 progress notifications", () => {
     expect(notification).toBeNull();
   });
 });
+
+describe("permission requests, both schema generations", () => {
+  // OpenCode ships two permission schemas. The current one renamed the event
+  // AND its fields:
+  //
+  //   v1  permission.asked      { permission, patterns }
+  //   v2  permission.v2.asked   { action,     resources }
+  //
+  // `permission.updated`, which this plugin also filtered on, exists in
+  // neither. Listening only for the old names meant a permission request --
+  // the one event that blocks a session until a human answers -- produced no
+  // notification at all on any recent OpenCode.
+
+  it("formats the current v2 event", () => {
+    const notification = formatNotification(
+      {
+        type: "permission.v2.asked",
+        properties: {
+          id: "per_1",
+          sessionID: "ses_1",
+          action: "bash",
+          resources: ["rm -rf build", "npm ci"],
+          title: "Miser Build",
+          directory: "/home/dev/repos/miser",
+        },
+      },
+      SERVER_URL,
+    );
+    expect(notification).not.toBeNull();
+    expect(notification?.body).toBe("Approve bash (rm -rf build, npm ci)?");
+    expect(notification?.title).toBe("miser needs you");
+    expect(notification?.categoryId).toBe("opencode_permission");
+  });
+
+  it("still formats the v1 event", () => {
+    const notification = formatNotification(
+      {
+        type: "permission.asked",
+        properties: { id: "per_1", sessionID: "ses_1", permission: "edit", patterns: ["src/a.ts"] },
+      },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("Approve edit (src/a.ts)?");
+  });
+
+  it("reads the v2 action even with no resources", () => {
+    const notification = formatNotification(
+      { type: "permission.v2.asked", properties: { id: "per_1", sessionID: "ses_1", action: "webfetch" } },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("Approve webfetch?");
+  });
+
+  it("carries the permission id so the action can answer it", () => {
+    const notification = formatNotification(
+      { type: "permission.v2.asked", properties: { id: "per_9", sessionID: "ses_1", action: "bash" } },
+      SERVER_URL,
+    );
+    expect(notification?.data).toMatchObject({ permissionId: "per_9", permission: "bash" });
+  });
+
+  it("notifies for a sub-agent's permission request rather than suppressing it", () => {
+    // Child sessions are suppressed because their completions are noise. A
+    // permission blocks: suppressing it means the work stalls and nobody is
+    // ever told.
+    const notification = formatNotification(
+      {
+        type: "permission.v2.asked",
+        properties: {
+          id: "per_1",
+          sessionID: "ses_child",
+          parentSessionID: "ses_parent",
+          action: "bash",
+        },
+      },
+      SERVER_URL,
+    );
+    expect(notification).not.toBeNull();
+    expect(notification?.body).toBe("Approve bash?");
+  });
+
+  it("still suppresses a sub-agent's completion", () => {
+    // The exemption is scoped to permissions; it must not have widened.
+    const notification = formatNotification(
+      {
+        type: "session.idle",
+        properties: { sessionID: "ses_child", parentSessionID: "ses_parent", title: "Search callers" },
+      },
+      SERVER_URL,
+    );
+    expect(notification).toBeNull();
+  });
+});

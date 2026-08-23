@@ -500,6 +500,41 @@ would be the better phone pattern, but the list wraps its groups in Tailwind
 making the existing columns fit. The rows themselves already wrap their control
 onto its own line below 640px upstream, so they only needed the touch target.
 
+## Permission requests
+
+A permission request is the one event that **blocks**: the session stops and
+waits for a human. Two things meant it did not reach the phone.
+
+**The event name.** OpenCode ships two permission schemas, and the current one
+renamed the event and its fields:
+
+| | Event | Fields |
+|---|---|---|
+| v1 | `permission.asked` | `permission`, `patterns` |
+| **current** | `permission.v2.asked` | `action`, `resources` |
+
+The plugin filtered for `permission.asked` and `permission.updated` -- and
+`permission.updated` exists in neither schema. So against any recent OpenCode a
+permission request produced **no notification at all**. Both generations are now
+handled, with the v2 field names read correctly.
+
+**Sub-agent requests were suppressed.** Child sessions are filtered out of
+notifications because their completions are noise. A permission is the opposite
+of noise: suppressing it means the work stalls and nobody is told. Permission
+kinds are now exempt from that filter; everything else still suppresses.
+
+A pending permission also stops the progress notification: a session waiting on
+a human is not working, and "still working" would be the wrong thing to say when
+the honest message is that it needs you.
+
+**Note the on-screen prompt is separate.** The dock the web UI renders comes
+from OpenCode's own synced state, not from this plugin, and the overlay's status
+bar is a third path -- it turns amber and reads "Waiting for you to approve" off
+the same event stream. That makes it a useful divider when the prompt does not
+appear: if the status bar reacts and no dock renders, the events are arriving
+and the problem is in the app's rendering or its auto-accept filter; if the
+status bar stays quiet, nothing is arriving.
+
 ## Progress notifications
 
 Four kinds of notification existed before this: a completion, an error, and the

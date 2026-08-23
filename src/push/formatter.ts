@@ -58,6 +58,10 @@ interface EventProperties {
   toolTitle?: string;
   /** session.progress: the running tool belongs to a sub-agent. */
   viaChild?: boolean;
+  /** permission.v2.asked: what is being asked for ("bash", "edit", ...). */
+  action?: string;
+  /** permission.v2.asked: what it applies to. The v1 event called these patterns. */
+  resources?: string[];
 }
 
 /**
@@ -78,6 +82,7 @@ export function extractProjectPath(event: NotificationEvent, ctx?: PluginContext
     case "session.progress":
     case "permission.updated":
     case "permission.asked":
+    case "permission.v2.asked":
       return (
         properties?.directory ||
         properties?.projectPath ||
@@ -226,7 +231,12 @@ export function formatNotification(
   const sessionId = extractSessionId(event);
 
   const sessionTitleForFiltering = extractSessionTitle(properties);
-  if (isChildSession(event)) {
+  // Sub-agent sessions are suppressed because their completions are noise. A
+  // permission request is the opposite: it BLOCKS, and the session sits there
+  // until a human answers. Suppressing it means the work stalls and nobody is
+  // ever told, so permission kinds are exempt.
+  const blocking = type === "permission.asked" || type === "permission.v2.asked";
+  if (!blocking && isChildSession(event)) {
     debugLog(`[formatNotification] Filtering child session (sessionId: ${sessionId || 'unknown'})`);
     return null;
   }
@@ -371,6 +381,29 @@ export function formatNotification(
         data: { ...baseData, permissionId: properties?.permissionId },
         ios: iosThread,
       };
+    case "permission.v2.asked": {
+      // The current schema. It renamed the fields as well as the event:
+      // `permission` -> `action`, `patterns` -> `resources`. Reading the v1
+      // names here produced "Approve action?" with no detail even on the rare
+      // occasion the event arrived at all.
+      const action = String(properties?.action || "action");
+      const resources = Array.isArray(properties?.resources) ? properties.resources : [];
+      const detail = resources.length > 0 ? ` (${resources.join(", ")})` : "";
+      return {
+        title: project ? `${project} needs you` : "Permission Required",
+        subtitle: sessionTitleForFiltering || undefined,
+        body: `Approve ${action}${detail}?`,
+        data: {
+          ...baseData,
+          permissionId: properties?.id,
+          permission: action,
+          patterns: resources,
+        },
+        // NOTE: Expo category identifiers cannot include ':' or '-'.
+        categoryId: "opencode_permission",
+        ios: iosThread,
+      };
+    }
     case "permission.asked": {
       const patterns = Array.isArray(properties?.patterns) ? properties.patterns : [];
       const patternsLabel = patterns.length > 0 ? ` (${patterns.join(", ")})` : "";
