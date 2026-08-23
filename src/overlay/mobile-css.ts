@@ -15,6 +15,30 @@
 import type { OverlayConfig } from "./types";
 
 export function buildOverlayCss(config: OverlayConfig): string {
+  const debugBadge = config.debug
+    ? `
+/* ---- debug badge (OPENCODE_MOBILE_OVERLAY_DEBUG=1) --------------------------
+   Proof that this stylesheet is loaded and in scope. Pure CSS so it works even
+   with the session strip disabled, and pointer-events: none so it can never
+   swallow a tap. */
+@media (max-width: ${config.maxWidth}px) {
+  html::after {
+    content: "oc-mobile overlay active (<= ${config.maxWidth}px)";
+    position: fixed !important;
+    left: 0 !important;
+    bottom: env(safe-area-inset-bottom, 0px) !important;
+    z-index: 2147483647 !important;
+    padding: 2px 6px !important;
+    background: #0c6e68 !important;
+    color: #ffffff !important;
+    font: 600 10px/1.4 ui-monospace, "SF Mono", Menlo, monospace !important;
+    letter-spacing: .02em !important;
+    pointer-events: none !important;
+  }
+}
+`
+    : "";
+
   return `/* opencode-mobile overlay -- injected by the plugin proxy */
 @media (max-width: ${config.maxWidth}px) {
 
@@ -200,5 +224,5 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-oc-chip][data-oc-state="attention"] { color: #e0925d; background: rgba(224, 146, 93, 0.16); }
   [data-oc-chip][data-oc-state="error"]     { color: #e4695d; background: rgba(228, 105, 93, 0.16); }
 }
-`;
+${debugBadge}`;
 }

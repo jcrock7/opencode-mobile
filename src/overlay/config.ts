@@ -18,12 +18,20 @@ const DEFAULT_CONFIG: OverlayConfig = {
   enabled: true,
   sessionStrip: true,
   maxWidth: DEFAULT_MAX_WIDTH,
+  debug: false,
 };
 
 /**
  * Env values that mean "off". Anything else (including unset) leaves the
  * default in place, so the overlay is opt-out rather than opt-in.
  */
+/** Env values that mean "on". Used for opt-in switches. */
+function isEnabled(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes";
+}
+
 function isDisabled(value: string | undefined): boolean {
   if (value === undefined) return false;
   const normalized = value.trim().toLowerCase();
@@ -45,6 +53,7 @@ export function loadOverlayConfig(env: NodeJS.ProcessEnv = process.env): Overlay
     enabled: !isDisabled(env.OPENCODE_MOBILE_OVERLAY),
     sessionStrip: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_STRIP),
     maxWidth: maxWidth ?? DEFAULT_CONFIG.maxWidth,
+    debug: isEnabled(env.OPENCODE_MOBILE_OVERLAY_DEBUG),
   };
 }
 

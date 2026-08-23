@@ -389,6 +389,7 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` keeps the CSS, drops the script | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
+| `OPENCODE_MOBILE_OVERLAY_DEBUG` | `1` shows a badge on the page proving the overlay is applied | off |
 | `OPENCODE_SERVER_PASSWORD` | **OpenCode's own** HTTP Basic password. Not read by this plugin, but see [Securing the tunnel](#securing-the-tunnel) | unset |
 
 ### Tunnel Providers
@@ -526,6 +527,30 @@ binary is unused either way.
 
 Install `cloudflared` itself with your system package manager (`brew install
 cloudflared`, or Cloudflare's apt/yum repo), not through npm.
+
+### Is the overlay actually applied?
+
+Most of what the overlay changes is either subtle (14px prose to 16px) or only
+visible on tool-call rows -- so a session showing nothing but assistant prose can
+look identical either way. iOS has no dev tools to check with, so:
+
+```bash
+OPENCODE_MOBILE_OVERLAY_DEBUG=1 opencode serve
+```
+
+A small teal badge appears at the bottom-left of the page whenever the overlay is
+in scope. If you see it, the stylesheet is loaded and the breakpoint matches. It
+is `pointer-events: none`, so it cannot swallow a tap.
+
+You can also load the stylesheet directly on the phone to prove the asset
+reaches the device: browse to `https://your-tunnel-url/__oc-mobile/overlay.css`
+and you should get CSS text rather than a 404.
+
+**Where the difference actually shows.** The truncation fixes apply to tool-call
+rows -- file names, directories, tool subtitles, patch targets. Those are folded
+shut by default, so turn on Settings -> General -> *Expand shell tool parts* and
+*Expand edit tool parts*, then scroll back through a session with real tool calls
+in it.
 
 ### Overlay not appearing: run the doctor first
 

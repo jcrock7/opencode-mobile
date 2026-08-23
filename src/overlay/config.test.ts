@@ -16,6 +16,7 @@ describe("overlay config", () => {
         enabled: true,
         sessionStrip: true,
         maxWidth: DEFAULT_MAX_WIDTH,
+        debug: false,
       });
     });
 
@@ -31,6 +32,18 @@ describe("overlay config", () => {
       const config = loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY_STRIP: "0" });
       expect(config.enabled).toBe(true);
       expect(config.sessionStrip).toBe(false);
+    });
+
+    it("leaves the debug badge off by default", () => {
+      expect(loadOverlayConfig({}).debug).toBe(false);
+    });
+
+    it.each(["1", "true", "on", "yes", "TRUE"])("enables debug for %s", (value) => {
+      expect(loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY_DEBUG: value }).debug).toBe(true);
+    });
+
+    it.each(["0", "false", "off", "", "maybe"])("leaves debug off for %s", (value) => {
+      expect(loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY_DEBUG: value }).debug).toBe(false);
     });
 
     it("accepts a custom breakpoint", () => {

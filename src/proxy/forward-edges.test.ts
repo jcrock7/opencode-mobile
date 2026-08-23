@@ -23,7 +23,7 @@ import {
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH } from "../overlay/config";
 import type { OverlayConfig } from "../overlay/types";
 
-const OVERLAY: OverlayConfig = { enabled: true, sessionStrip: true, maxWidth: 767 };
+const OVERLAY: OverlayConfig = { enabled: true, sessionStrip: true, maxWidth: 767, debug: false };
 
 let upstream: http.Server | null = null;
 let proxy: http.Server | null = null;

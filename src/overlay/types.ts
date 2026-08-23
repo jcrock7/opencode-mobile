@@ -18,6 +18,14 @@ export interface OverlayConfig {
   sessionStrip: boolean;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
+  /**
+   * Show a fixed badge proving the overlay is applied.
+   *
+   * "Is the overlay actually on?" is otherwise hard to answer on iOS, where
+   * there are no dev tools: most of what the overlay changes is either subtle
+   * (a type-scale step) or only visible on tool-call rows.
+   */
+  debug: boolean;
 }
 
 export interface OverlayAsset {

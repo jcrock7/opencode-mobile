@@ -4,7 +4,7 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, maxWidth: 767 };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, maxWidth: 767, debug: false };
 
 interface Captured {
   status: number;
@@ -83,6 +83,24 @@ describe("overlay assets", () => {
       const mediaEnd = css.indexOf("/* ---- session switcher strip");
       expect(stripAt).toBeGreaterThan(-1);
       expect(stripAt).toBeGreaterThan(mediaEnd);
+    });
+
+    it("omits the debug badge unless asked", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).not.toContain("oc-mobile overlay active");
+    });
+
+    it("emits the debug badge when enabled, scoped to the breakpoint", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, debug: true })!.body;
+      expect(css).toContain("oc-mobile overlay active (<= 767px)");
+      expect(css).toContain("pointer-events: none !important");
+    });
+
+    it("rebuilds the asset when only debug changes", () => {
+      const plain = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!;
+      const debug = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, debug: true })!;
+      expect(debug.body).not.toBe(plain.body);
+      expect(debug.etag).not.toBe(plain.etag);
     });
 
     it("does not hide the sidebar rail", () => {

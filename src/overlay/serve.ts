@@ -25,7 +25,7 @@ export function buildAsset(body: string, contentType: string): OverlayAsset {
 const cache = new Map<string, Map<string, OverlayAsset>>();
 
 function cacheKey(config: OverlayConfig): string {
-  return `${config.maxWidth}:${config.sessionStrip ? 1 : 0}`;
+  return `${config.maxWidth}:${config.sessionStrip ? 1 : 0}:${config.debug ? 1 : 0}`;
 }
 
 export function overlayAssets(config: OverlayConfig): Map<string, OverlayAsset> {
