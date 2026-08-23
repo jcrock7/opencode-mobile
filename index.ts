@@ -870,12 +870,15 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
     await displayQRCode(tunnel.url);
 
     // Save tunnel metadata to .config/opencode/tunnel.json
+    // Record what the tunnel actually forwards to -- the plugin -- not the
+    // OpenCode port behind it. Recording openCodePort here made the metadata
+    // claim the tunnel bypassed the plugin when it did not.
     updateTunnelMetadata(
       tunnel.url,
       tunnel.tunnelId,
       tunnel.provider,
       tunnel.port,
-      openCodePort
+      pluginPort
     );
   } catch (tunnelError: any) {
     console.error("[DEV] Failed to start tunnel:", tunnelError.message);

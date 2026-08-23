@@ -30,6 +30,14 @@ const configDir = join(homedir(), ".config", "opencode");
 const OPENCODE_PORT = Number(process.env.OPENCODE_PORT) || 4096;
 const PLUGIN_PORT = OPENCODE_PORT + 1;
 
+// With the password in the environment the injection check can actually run.
+// Without it the server answers 401 and there is nothing to inspect.
+const PASSWORD = process.env.OPENCODE_SERVER_PASSWORD || "";
+const USERNAME = process.env.OPENCODE_SERVER_USERNAME || "opencode";
+const authHeader = PASSWORD
+  ? { authorization: "Basic " + Buffer.from(`${USERNAME}:${PASSWORD}`).toString("base64") }
+  : {};
+
 let problems = 0;
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m) => { problems++; console.log(`  FAIL  ${m}`); };
@@ -68,6 +76,24 @@ function listeningPorts() {
     if (port) out.push({ port: Number(port[1]), name: cols[0] ?? "?", pid: cols[1] ?? "?" });
   }
   return out;
+}
+
+/** Ports the running cloudflared processes actually forward to. */
+function cloudflaredTargets() {
+  try {
+    const raw = execSync("ps -eo args= 2>/dev/null", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const ports = new Set();
+    for (const line of raw.split("\n")) {
+      if (!/cloudflared/.test(line) || /grep|doctor\.mjs/.test(line)) continue;
+      for (const m of line.matchAll(/--url\s+\S*?:(\d+)/g)) ports.add(Number(m[1]));
+    }
+    return [...ports];
+  } catch {
+    return [];
+  }
 }
 
 function opencodeProcesses() {
@@ -239,7 +265,9 @@ if (oc.error) {
   ok(`OpenCode answering on ${OPENCODE_PORT} (HTTP ${oc.status})`);
 }
 
-const pluginRoot = await probe(`http://127.0.0.1:${PLUGIN_PORT}/`, { headers: { accept: "text/html" } });
+const pluginRoot = await probe(`http://127.0.0.1:${PLUGIN_PORT}/`, {
+  headers: { accept: "text/html", ...authHeader },
+});
 const pluginCss = await probe(`http://127.0.0.1:${PLUGIN_PORT}/__oc-mobile/overlay.css`);
 
 if (pluginRoot.error) {
@@ -277,9 +305,17 @@ if (pluginRoot.error) {
   }
 
   const injected = typeof pluginRoot.body === "string" && pluginRoot.body.includes("oc-mobile-overlay");
-  if (injected) ok(`plugin injects the overlay into HTML`);
-  else {
-    bad(`plugin served HTML without the overlay link`);
+  if (injected) {
+    ok(`plugin injects the overlay into HTML`);
+  } else if (pluginRoot.status === 401) {
+    // The plugin proxies OpenCode, so an unauthenticated probe gets OpenCode's
+    // auth challenge -- not HTML, and nothing to inspect. Not a failure.
+    warn(`cannot verify injection: HTTP 401 (OpenCode is password protected)`);
+    info(`the plugin is proxying correctly -- that 401 came from OpenCode through it.`);
+    info(`to check injection, re-run with the password available:`);
+    info(`  OPENCODE_SERVER_PASSWORD='...' node scripts/doctor.mjs`);
+  } else {
+    bad(`plugin served HTTP ${pluginRoot.status} without the overlay link`);
     const ct = pluginRoot.headers?.get?.("content-type") ?? "?";
     info(`content-type was: ${ct}`);
     if (process.env.OPENCODE_MOBILE_OVERLAY) {
@@ -297,14 +333,31 @@ if (!meta || !meta.url) {
   info(`url:        ${meta.url}`);
   info(`provider:   ${meta.provider}`);
   info(`targetPort: ${meta.targetPort}`);
-  if (meta.targetPort === PLUGIN_PORT) {
-    ok(`tunnel points at the plugin (${PLUGIN_PORT})`);
-  } else if (meta.targetPort === OPENCODE_PORT) {
-    bad(`tunnel points straight at OpenCode (${OPENCODE_PORT}), bypassing the plugin`);
-    info(`this is what the old code did. Either the running plugin is an older`);
-    info(`build, or this metadata is stale from a previous run.`);
+  // tunnel.json is only written when the plugin starts a tunnel, so it goes
+  // stale. The running cloudflared's own --url is the live truth; check that
+  // first and treat the metadata as advisory.
+  const liveTargets = cloudflaredTargets();
+  if (liveTargets.length > 0) {
+    if (liveTargets.every((port) => port === PLUGIN_PORT)) {
+      ok(`live tunnel forwards to the plugin (${PLUGIN_PORT})`);
+      if (meta.targetPort !== PLUGIN_PORT) {
+        info(`(tunnel.json still says ${meta.targetPort} -- stale, harmless)`);
+      }
+    } else if (liveTargets.includes(PLUGIN_PORT)) {
+      bad(`cloudflared is forwarding to more than one port: ${liveTargets.join(", ")}`);
+      info(`on a NAMED tunnel Cloudflare load-balances between them, so the`);
+      info(`overlay will appear intermittently. Kill the extras:`);
+      info(`  pkill -f cloudflared   # then restart 'opencode serve'`);
+    } else {
+      bad(`live tunnel forwards to ${liveTargets.join(", ")}, not the plugin (${PLUGIN_PORT})`);
+      info(`if you run cloudflared yourself or via a service, repoint it at ${PLUGIN_PORT}`);
+    }
+  } else if (meta.targetPort === PLUGIN_PORT) {
+    ok(`tunnel metadata points at the plugin (${PLUGIN_PORT})`);
+    warn(`no cloudflared process found though -- the tunnel may be down`);
   } else {
-    warn(`tunnel targets port ${meta.targetPort}, which is neither OpenCode nor the plugin`);
+    warn(`no cloudflared running; tunnel.json says targetPort ${meta.targetPort}`);
+    info(`that metadata is only rewritten when the plugin starts a tunnel`);
   }
 }
 
@@ -339,13 +392,16 @@ try {
 /* ---------- 6. the public URL ---------- */
 if (meta?.url) {
   section("6. public tunnel URL");
-  const pub = await probe(meta.url, { timeout: 10000, headers: { accept: "text/html" } });
+  const pub = await probe(meta.url, {
+    timeout: 10000,
+    headers: { accept: "text/html", ...authHeader },
+  });
   if (pub.error) {
     warn(`could not reach ${meta.url} (${pub.error})`);
     info(`a free trycloudflare URL changes every restart -- this one may be dead`);
   } else if (pub.status === 401) {
     ok(`reachable, asking for the password (HTTP 401) -- expected with OPENCODE_SERVER_PASSWORD set`);
-    info(`cannot check injection without credentials; check from the phone instead`);
+    info(`re-run with OPENCODE_SERVER_PASSWORD set to check injection end to end`);
   } else if (pub.status >= 300 && pub.status < 400) {
     warn(`HTTP ${pub.status} redirect to ${pub.headers?.get?.("location") ?? "?"}`);
   } else if (typeof pub.body === "string" && pub.body.includes("oc-mobile-overlay")) {
