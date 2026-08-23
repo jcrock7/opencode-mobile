@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 447 tests with an enforced 85% coverage threshold
+- Test suite grown to 502 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -290,7 +290,19 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   `viewport-fit=cover` -- so the document extends *under* the notch and the home
   indicator. Upstream only pads for that in its newer layout, so the overlay pads
   the app shell itself.
-- Enforces 44pt hit areas on the chrome controls, which are built for a mouse
+- **Enforces 44pt hit areas** on the chrome controls, which are built for a
+  mouse: upstream's icon buttons are 20/24/28px square, its labelled buttons
+  24/28/32px tall, and the Session / Changes switcher 28px. Two details make the
+  difference between a rule that works and one that does nothing. The icon
+  buttons set an explicit *square* size, so they need a `min-width` floor as well
+  as a `min-height` -- height alone yields a tall thin sliver. And upstream ships
+  two generations of nearly every control; the phone build renders the `-v2` set,
+  so those selectors are listed alongside their v1 namesakes. The titlebar is
+  released from its fixed 40px `overflow: hidden` box at the same time, or it
+  simply clips the taller buttons. Glyphs go to 20px so the bigger buttons are
+  not mostly empty -- scoped to direct icon children, so the progress spinner and
+  the file-type badges keep the sizes they were given. All of it sits behind the
+  phone breakpoint.
 - Contains overscroll to the timeline, so it stops rubber-banding the whole page
 - Removes the tap-highlight flash and text cursor from chrome, while keeping
   prose, code and diffs selectable -- copying a path out of a session is the point

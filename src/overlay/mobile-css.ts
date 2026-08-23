@@ -137,28 +137,91 @@ export function buildOverlayCss(config: OverlayConfig): string {
     padding-bottom: max(env(safe-area-inset-bottom), 8px) !important;
   }
 
-  /* 7. Reclaim vertical space. On a 390x844 screen the status bar, titlebar,
-        tab row and session header together eat roughly a third of the height
-        before any content appears. Padding only -- no height guessing. */
-  [data-slot="titlebar-tab-item"] {
-    padding-top: 3px !important;
-    padding-bottom: 3px !important;
-  }
-  [data-component="tabs"] {
-    min-height: 0 !important;
+  /* 7. Touch targets. 44pt is Apple's documented floor and every control here
+        is well under it: IconButton is 20/24/28px square, button-v2 is
+        24/28/32px tall, and the segmented control is 28px.
+
+        Two things matter. min-WIDTH as much as min-height -- the icon buttons
+        set explicit square dimensions, so raising only the height yields a tall
+        thin button. And the v2 component set has to be listed separately: the
+        earlier version of this rule named only the v1 selectors, which is why
+        it changed almost nothing. */
+
+  /* The titlebar has to be able to hold a 44pt control. There is exactly one
+     <header> in the app -- the titlebar -- and in its non-v2 form it is a 40px
+     box with overflow: hidden, which would clip a taller button outright. */
+  header {
+    height: auto !important;
+    min-height: 48px !important;
+    overflow: visible !important;
   }
 
-  /* 8. Touch. 44pt is Apple's documented floor; the chrome controls are built
-        for a mouse. min-height on the control itself, so the hit area grows
-        without moving anything around it. */
+  /* Icon-only controls: square, so they need both floors. */
   [data-component="icon-button"],
+  [data-component="icon-button-v2"],
   [data-component="desktop-icon-button"],
+  [data-component="split-button-v2-menu-trigger"],
+  [data-component="session-tab-popover-trigger"],
+  [data-component="accordion-v2-trigger"],
+  [data-component="context-tool-group-trigger"] {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  /* Controls carrying a label: height floor plus room either side, but no width
+     floor -- a short label does not need 44px of dead space around it. */
+  [data-component="button"],
+  [data-component="button-v2"],
+  [data-component="split-button-v2-action"],
   [data-component="prompt-model-control"],
   [data-component="prompt-agent-control"],
-  [data-component="prompt-variant-control"],
+  [data-component="prompt-variant-control"] {
+    min-height: 44px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  /* The Session / Changes switcher. Both the track and its items are 28px. */
+  [data-slot="segmented-control-v2"],
+  [data-component="segmented-control-v2"] {
+    height: auto !important;
+    min-height: 44px !important;
+  }
+  [data-slot="segmented-control-v2"] > *,
+  [data-component="segmented-control-v2"] > * {
+    height: auto !important;
+    min-height: 44px !important;
+  }
+
+  /* Session tabs. */
+  [data-slot="titlebar-tab-item"],
   [data-slot="titlebar-tab-item"] > a,
   [data-slot="titlebar-tab-item"] > button {
     min-height: 44px !important;
+  }
+
+  /* Menus and dropdowns are lists you tap, not hover. */
+  [data-component="menu-v2-item"],
+  [data-component="dropdown-menu-content"] [role="menuitem"],
+  [data-component="context-menu-content"] [role="menuitem"],
+  [data-component="menu-v2-content"] [role="menuitem"] {
+    min-height: 44px !important;
+  }
+
+  /* 8. Make the glyphs bigger too, so a 44px button is not mostly empty.
+        Scoped to direct icon children of these controls, so it cannot resize
+        an icon that is deliberately sized elsewhere (the progress spinner, a
+        file-type badge). */
+  [data-component="icon-button"] > svg,
+  [data-component="icon-button-v2"] > svg,
+  [data-component="desktop-icon-button"] > svg,
+  [data-component="button"] > svg,
+  [data-component="button-v2"] > svg,
+  [data-component="split-button-v2-action"] > svg,
+  [data-component="split-button-v2-menu-trigger"] > svg,
+  [data-component="session-tab-popover-trigger"] > svg {
+    width: 20px !important;
+    height: 20px !important;
   }
 
   /* 9. Scrolling that behaves like an app rather than a page.

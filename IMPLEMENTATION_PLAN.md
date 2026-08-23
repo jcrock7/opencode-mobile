@@ -139,7 +139,7 @@ Every deliverable re-checked against the built code.
 | # | Deliverable | Verified by |
 |---|---|---|
 | D1 | Overlay config | 3 env vars honoured; routes namespaced under `/__oc-mobile/`; out-of-range breakpoints rejected. 26 tests. |
-| D2 | Overlay stylesheet | All 5 truncated slots targeted; 16px prose; 44px targets; rail hidden; scrollbar restored; safe-area padding. |
+| D2 | Overlay stylesheet | All 5 truncated slots targeted; 16px prose; 44px targets across both the v1 and v2 control sets, with the titlebar released to fit them; scrollbar restored; safe-area padding. The planned "hide the redundant rail" step was dropped: the desktop rail is already `hidden xl:block` upstream, so the only rail on a phone is the drawer's project navigation, and hiding it emptied the drawer. |
 | D3 | Session strip | Reads `/session`, `/session/status`, `/event`; backoff; re-mounts after SPA nav; hides below 2 sessions; no write verbs present. |
 | D4 | HTML injection | Idempotent; indentation preserved; 3-step fallback chain. 21 tests. |
 | D5 | Asset serving | Content types, ETag/304, HEAD, 405, memoisation. 21 tests. |
@@ -148,7 +148,7 @@ Every deliverable re-checked against the built code.
 | D8 | Wiring | Tunnel targets `pluginPort`; loopback bind retained; upgrade handler registered; manual `/tunnel` defaults to the plugin port. 11 assembled-server tests. |
 | D9 | Notification fixes | A1 `truncateMultiline` keeps newlines; A2 project in title; A3 `iosThread` on all 4 branches; A6 error gets 320 chars + `bigtext`. 46 tests. |
 | D10 | Documentation | README overlay/security/env/troubleshooting sections; AGENTS.md module layout and 5 new invariants. |
-| D11 | Tests | 447 passing, 0 failing, 2 skipped (live-ngrok, opt-in). Coverage 89.12% statements / 85.66% branches / 93.83% functions / 89.28% lines, all above the enforced 85% threshold. |
+| D11 | Tests | 502 passing, 0 failing, 2 skipped (live-ngrok, opt-in). Coverage 89.18% statements / 86.00% branches / 93.87% functions / 89.33% lines, all above the enforced 85% threshold. |
 
 ### Coverage scope
 

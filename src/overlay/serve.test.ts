@@ -155,6 +155,68 @@ describe("overlay assets", () => {
       expect(css).toContain("min-height: 44px !important");
     });
 
+    it("raises the v2 controls too, not just their v1 namesakes", () => {
+      // Upstream ships two generations of every control and the phone build
+      // renders the v2 set. An earlier version of the touch-target rule named
+      // only the v1 selectors, so it changed almost nothing on a real session.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      for (const component of [
+        "icon-button-v2",
+        "button-v2",
+        "split-button-v2-action",
+        "split-button-v2-menu-trigger",
+        "menu-v2-item",
+        "accordion-v2-trigger",
+      ]) {
+        expect(css).toContain(`[data-component="${component}"]`);
+      }
+    });
+
+    it("widens the icon buttons as well as heightening them", () => {
+      // IconButton sets an explicit square size, so a height floor on its own
+      // produces a tall thin sliver instead of a bigger target.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-component="icon-button-v2"\][\s\S]{0,400}min-width: 44px !important/,
+      );
+    });
+
+    it("lets the titlebar grow to hold a 44px control", () => {
+      // The non-v2 titlebar is a 40px box with overflow: hidden, which would
+      // clip a taller button rather than show it.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(/header\s*\{[\s\S]{0,200}overflow: visible !important/);
+      expect(css).toMatch(/header\s*\{[\s\S]{0,200}height: auto !important/);
+    });
+
+    it("raises the Session / Changes switcher, track and items alike", () => {
+      // The track sets its own 28px height, so the items cannot outgrow it
+      // unless the track is released too.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-slot="segmented-control-v2"] > *');
+      expect(css).toMatch(
+        /\[data-slot="segmented-control-v2"\],[\s\S]{0,200}min-height: 44px !important/,
+      );
+    });
+
+    it("scales the glyphs to match, without touching icons sized elsewhere", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-component="icon-button-v2"] > svg');
+      expect(css).toContain("width: 20px !important");
+      // Direct children only: a descendant selector here would also resize the
+      // progress spinner and the file-type badges.
+      expect(css).not.toContain('[data-component="icon-button-v2"] svg,');
+    });
+
+    it("keeps the touch targets behind the phone breakpoint", () => {
+      // A 48px titlebar and 44px buttons are a phone affordance; forcing them
+      // on a desktop viewport would just make the chrome clumsy.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      const unconditional = stripMediaBlocks(css);
+      expect(unconditional).not.toContain("min-height: 44px !important");
+      expect(unconditional).not.toMatch(/header\s*\{/);
+    });
+
     it("contains overscroll to the timeline", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       expect(css).toContain("overscroll-behavior: contain !important");
