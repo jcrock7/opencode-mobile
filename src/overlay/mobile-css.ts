@@ -130,10 +130,19 @@ export function buildOverlayCss(config: OverlayConfig): string {
      the "open project" button -- hiding it gained nothing and removed the
      drawer's project navigation. */
 
-  /* 6. Respect the home indicator so the composer is not half off-screen. */
+  /* 6. Respect the home indicator so the composer is not half off-screen.
+        A flat 8px by default: the v2 layout (layout-new.tsx) already pads its
+        own root by the bottom inset, so adding the inset here as well doubles
+        it -- about 68px of dead space under the composer on a Dynamic Island
+        phone. The legacy layout pads nothing, so there it gets the inset. */
   [data-component="dock-prompt"],
   [data-component="session-prompt-dock"],
   [data-component="session-followup-dock"] {
+    padding-bottom: 8px !important;
+  }
+  #root:has([data-component="sidebar-nav-mobile"]) [data-component="dock-prompt"],
+  #root:has([data-component="sidebar-nav-mobile"]) [data-component="session-prompt-dock"],
+  #root:has([data-component="sidebar-nav-mobile"]) [data-component="session-followup-dock"] {
     padding-bottom: max(env(safe-area-inset-bottom), 8px) !important;
   }
 
@@ -206,6 +215,47 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-component="context-menu-content"] [role="menuitem"],
   [data-component="menu-v2-content"] [role="menuitem"] {
     min-height: 44px !important;
+  }
+
+  /* 7b. The composer's control row is the one place the floors above do harm.
+         It is a fixed 44px box (h-11) holding four controls on one line inside
+         a form with overflow-clip, and the send button is an 'icon-button'
+         sized 'size-7' with a tooltip wrapper. Forcing a 44px box on those
+         made the send button overflow its slot and paint over the variant
+         control ("High"), and clipped its bottom edge against the form.
+
+         So inside the composer the rendered boxes go back to upstream's, and
+         the tap area is grown with an inset pseudo-element instead -- 44pt of
+         touch with zero layout change. This is the right technique for any
+         row that is width-constrained; it is only worth the extra rules here
+         because this row is the one that overflowed. */
+  [data-component="prompt-input-v2"] [data-component="icon-button"],
+  [data-component="prompt-input-v2"] [data-component="icon-button-v2"],
+  [data-component="prompt-input-v2"] [data-component="button-v2"],
+  [data-component="prompt-input"] [data-component="icon-button"],
+  [data-component="prompt-input"] [data-component="icon-button-v2"],
+  [data-component="prompt-input"] [data-component="button-v2"] {
+    min-width: 0 !important;
+    min-height: 0 !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+
+  /* The invisible tap area. 'position: relative' is already the case for these
+     buttons upstream, but assert it so the inset is measured against the
+     button rather than an ancestor. */
+  [data-action="prompt-submit"],
+  [data-action="prompt-attach"],
+  [data-action="prompt-model"] {
+    position: relative !important;
+  }
+  [data-action="prompt-submit"]::after,
+  [data-action="prompt-attach"]::after,
+  [data-action="prompt-model"]::after {
+    content: "" !important;
+    position: absolute !important;
+    inset: -8px !important;
+    border-radius: inherit !important;
   }
 
   /* 8. Make the glyphs bigger too, so a 44px button is not mostly empty.
@@ -322,15 +372,27 @@ export function buildOverlayCss(config: OverlayConfig): string {
    Installed to the Home Screen, the page runs with no browser chrome. OpenCode
    asks for 'apple-mobile-web-app-status-bar-style: black-translucent' and
    'viewport-fit=cover', which means the document extends UNDER the status bar
-   and the home indicator. Upstream only pads for that in its newer layout
-   (layout-new.tsx), so in the shipped layout the titlebar sits beneath the
-   clock. Pad the app shell instead of any one component, so this holds
-   whichever layout is active. */
+   and the home indicator.
+
+   Which padding is ours depends on the layout, and both ship. The v2 layout
+   (layout-new.tsx, the one that renders the Session / Changes tabs) already
+   sets padding-top and padding-bottom from the insets on its own root, so
+   padding #root as well applies them TWICE: on a Dynamic Island phone that is
+   roughly 118px of dead black above the titlebar. The legacy layout pads
+   nothing and does need it.
+
+   So the vertical inset is gated on a marker only the legacy layout renders,
+   and the horizontal one -- which neither layout sets -- is unconditional. If
+   :has() is unavailable the gated rule simply drops, which leaves upstream's
+   own behaviour rather than a double gap. */
 @media (display-mode: standalone), (display-mode: fullscreen) {
   #root {
-    padding-top: env(safe-area-inset-top, 0px) !important;
     padding-left: env(safe-area-inset-left, 0px) !important;
     padding-right: env(safe-area-inset-right, 0px) !important;
+  }
+  #root:has([data-component="sidebar-nav-mobile"]),
+  #root:has([data-component="sidebar-nav-desktop"]) {
+    padding-top: env(safe-area-inset-top, 0px) !important;
   }
 }
 

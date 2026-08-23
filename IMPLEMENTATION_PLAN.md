@@ -148,7 +148,7 @@ Every deliverable re-checked against the built code.
 | D8 | Wiring | Tunnel targets `pluginPort`; loopback bind retained; upgrade handler registered; manual `/tunnel` defaults to the plugin port. 11 assembled-server tests. |
 | D9 | Notification fixes | A1 `truncateMultiline` keeps newlines; A2 project in title; A3 `iosThread` on all 4 branches; A6 error gets 320 chars + `bigtext`. 46 tests. |
 | D10 | Documentation | README overlay/security/env/troubleshooting sections; AGENTS.md module layout and 5 new invariants. |
-| D11 | Tests | 502 passing, 0 failing, 2 skipped (live-ngrok, opt-in). Coverage 89.18% statements / 86.00% branches / 93.87% functions / 89.33% lines, all above the enforced 85% threshold. |
+| D11 | Tests | 507 passing, 0 failing, 2 skipped (live-ngrok, opt-in). Coverage 89.18% statements / 86.00% branches / 93.87% functions / 89.33% lines, all above the enforced 85% threshold. |
 
 ### Coverage scope
 

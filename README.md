@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 502 tests with an enforced 85% coverage threshold
+- Test suite grown to 507 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -288,8 +288,13 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
 - **Handles PWA safe areas.** Installed to the Home Screen the page runs with no
   browser chrome, and OpenCode asks for a translucent status bar with
   `viewport-fit=cover` -- so the document extends *under* the notch and the home
-  indicator. Upstream only pads for that in its newer layout, so the overlay pads
-  the app shell itself.
+  indicator. Which padding is the overlay's to add depends on the layout, and
+  upstream ships two. The v2 layout (`layout-new.tsx`, the one with the Session /
+  Changes tabs) already applies both vertical insets to its own root, so padding
+  the app shell as well applies them *twice* -- roughly 118px of dead black above
+  the titlebar on a Dynamic Island phone, and about 68px under the composer. So
+  the vertical inset is gated on a marker only the legacy layout renders, while
+  the horizontal inset, which neither layout sets, is unconditional.
 - **Enforces 44pt hit areas** on the chrome controls, which are built for a
   mouse: upstream's icon buttons are 20/24/28px square, its labelled buttons
   24/28/32px tall, and the Session / Changes switcher 28px. Two details make the
@@ -303,6 +308,13 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   not mostly empty -- scoped to direct icon children, so the progress spinner and
   the file-type badges keep the sizes they were given. All of it sits behind the
   phone breakpoint.
+- **Grows the composer's tap areas without growing its boxes.** The composer's
+  control row is the one place a size floor does harm: it is a fixed 44px box
+  holding the attach, model, variant and send controls on a single line, inside a
+  form with `overflow-clip`. Forcing 44px boxes there pushed the send button out
+  of its slot and painted it over the variant control. Inside the composer the
+  rendered boxes stay at upstream's size and the tap area is grown with an inset
+  pseudo-element instead -- 44pt of touch, zero layout change.
 - Contains overscroll to the timeline, so it stops rubber-banding the whole page
 - Removes the tap-highlight flash and text cursor from chrome, while keeping
   prose, code and diffs selectable -- copying a path out of a session is the point

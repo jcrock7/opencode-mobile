@@ -141,6 +141,54 @@ describe("overlay assets", () => {
       expect(css).toMatch(/#root\s*\{/);
     });
 
+    it("does not double-pad the top inset on the layout that pads itself", () => {
+      // layout-new.tsx sets padding-top/bottom from the insets on its own root.
+      // Padding #root unconditionally applied them twice, which on a Dynamic
+      // Island phone left ~118px of dead black above the titlebar. The vertical
+      // inset is gated on a marker only the legacy layout renders.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('#root:has([data-component="sidebar-nav-mobile"])');
+      // No bare `#root { ... padding-top ... }` anywhere.
+      expect(css).not.toMatch(/#root\s*\{[^}]*padding-top/);
+    });
+
+    it("keeps the horizontal insets unconditional", () => {
+      // Neither layout sets these, so they are always ours to apply.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(/#root\s*\{[^}]*padding-left: env\(safe-area-inset-left/);
+    });
+
+    it("does not double-pad the composer for the home indicator either", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      // Flat 8px by default; the inset only on the layout that pads nothing.
+      expect(css).toMatch(
+        /\[data-component="session-prompt-dock"\],[\s\S]{0,200}padding-bottom: 8px !important/,
+      );
+      expect(css).toMatch(
+        /#root:has\(\[data-component="sidebar-nav-mobile"\]\) \[data-component="dock-prompt"\]/,
+      );
+    });
+
+    it("leaves the composer control boxes at upstream's size", () => {
+      // The footer row is a fixed 44px box holding four controls on one line
+      // inside a form with overflow-clip. Forcing 44px boxes there made the
+      // send button overflow its slot and paint over the variant control.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-component="prompt-input-v2"\] \[data-component="icon-button"\][\s\S]{0,600}min-width: 0 !important/,
+      );
+    });
+
+    it("grows the composer tap areas without growing their boxes", () => {
+      // An inset pseudo-element gives 44pt of touch with zero layout change --
+      // the only way to do it in a width-constrained row.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      for (const action of ["prompt-submit", "prompt-attach", "prompt-model"]) {
+        expect(css).toContain(`[data-action="${action}"]::after`);
+      }
+      expect(css).toMatch(/\[data-action="prompt-submit"\]::after[\s\S]{0,300}inset: -8px !important/);
+    });
+
     it("pads the composer for the home indicator, whichever dock is in use", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       for (const dock of ["dock-prompt", "session-prompt-dock", "session-followup-dock"]) {
