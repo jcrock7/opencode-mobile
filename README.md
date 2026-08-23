@@ -9,10 +9,11 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
-- Fixed two things that rendered twice on a phone: the overlay's ask dock
-  appeared alongside upstream's own (it checked for it once, before Solid had
-  mounted it), and the session strip repeated every session upstream was already
-  showing as a titlebar tab.
+- **One row of chrome instead of three.** Upstream's titlebar is hidden on a
+  phone and the session strip takes over its Home and New buttons, so the two
+  session switchers become one. See [Mobile web overlay](#mobile-web-overlay).
+- Fixed: the overlay's ask dock rendered alongside upstream's own, because it
+  checked for it once -- before Solid had mounted it.
 - Fixed: upstream's question and permission docks grew past the screen on a
   phone, putting Submit below the fold with nothing to scroll. Their own cap
   falls back to `100dvh` when it cannot find the transcript's sticky header,
@@ -36,7 +37,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 813 tests with an enforced 85% coverage threshold
+- Test suite grown to 817 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -306,15 +307,21 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   going. Copper when a permission is waiting on you, red when the session failed,
   gone when it is idle. This is the one thing a phone screen cannot otherwise tell
   you without scrolling to hunt for the live tool row.
-- Adds a **session switcher**: a horizontally scrolling strip of chips above the
-  timeline, one per session, coloured by state and sorted so anything needing you
-  comes first. It omits any session upstream is already showing as a titlebar
-  tab, and disappears entirely when they all are -- otherwise the phone carried
-  two session switchers stacked on top of each other, which reads as one row
-  rendered twice. The two are not the same set (upstream's are the *open tabs*;
-  the strip is every recent session), so showing only what upstream is not
-  already showing keeps the reach the strip adds without the duplication.
-  `OPENCODE_MOBILE_OVERLAY_STRIP=0` removes it altogether
+- Replaces the titlebar with a **single row of chrome**. The phone had three
+  bands above the transcript -- this overlay's session strip, upstream's titlebar
+  with its own session tabs, and the session panel's title row -- two of them
+  switching sessions. The strip is the one that lists *every* session rather
+  than only the open tabs and colours them by state, so the titlebar goes and
+  the strip takes over what it carried: Home (the project and session browser)
+  on the left, the scrolling chips in the middle, New session and the changes
+  button on the right. Both new buttons click upstream's real controls rather
+  than reimplementing them, which is why the titlebar is hidden with
+  `display: none` rather than removed -- a hidden element still takes a
+  synthetic click. Identifying them is the interesting part: `IconButtonV2` sets
+  no `data-icon` (upstream has it commented out), but every v2 icon renders
+  `<use href="#opencode-v2-icon-NAME">` against a sprite, so the name is in the
+  DOM regardless. `OPENCODE_MOBILE_OVERLAY_STRIP=0` restores the titlebar and
+  removes the strip
 - **Handles PWA safe areas.** Installed to the Home Screen the page runs with no
   browser chrome, and OpenCode asks for a translucent status bar with
   `viewport-fit=cover` -- so the document extends *under* the notch and the home

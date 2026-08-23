@@ -102,6 +102,34 @@ export function buildOverlayCss(config: OverlayConfig): string {
      rather than a route, so the triggers are the only handle on it. Hiding with
      `visibility` would still reserve the row; `display: none` on the list keeps
      the triggers in the DOM and clickable, which is what matters. */
+  /**
+   * Upstream's titlebar, replaced by the session strip.
+   *
+   * The phone had three bands of chrome above the transcript: this overlay's
+   * session strip, upstream's titlebar with its own session tabs, and the
+   * session panel's title row. Two of them switched sessions. The strip is the
+   * one that lists every session rather than only the open tabs and colours
+   * them by state, so the titlebar goes.
+   *
+   * Hidden, never removed: overlay.js proxies the two controls it carried
+   * ('grid-plus' for Home, 'plus' for a new session) by clicking the real
+   * buttons, and a `display: none` element still takes a synthetic click. Same
+   * reasoning as the Session / Changes triggers below.
+   *
+   * Gated on the strip, not on anything else: with
+   * OPENCODE_MOBILE_OVERLAY_STRIP=0 there would be nothing left to navigate
+   * with, so the titlebar has to stay.
+   */
+  const titlebar = config.sessionStrip
+    ? `
+@media (max-width: ${config.maxWidth}px) {
+  header[data-slot="titlebar-v2"] {
+    display: none !important;
+  }
+}
+`
+    : "";
+
   const changes = config.changesButton
     ? `
 @media (max-width: ${config.maxWidth}px) {
@@ -117,15 +145,15 @@ export function buildOverlayCss(config: OverlayConfig): string {
     align-items: center !important;
     justify-content: center !important;
     position: relative !important;
+    /* Sits on the session strip now, as its last child, matched to the nav
+       buttons either side of the chips: the negative block margin cancels the
+       strip's own padding so a 44px target does not make the row 56px tall.
+       (It falls back to upstream's <header> when the strip is switched off,
+       where the auto left margin still pushes it to the end of the row.) */
     margin-left: auto !important;
-    margin-right: 6px !important;
-    /* Stretch, then centre the glyph inside -- rather than 'align-self: center',
-       which centres the button in the header and lands a few pixels off the tab
-       line. The tab strip is itself a stretched flex child that centres its own
-       contents, so matching that construction makes the two agree by
-       definition instead of by a tuned offset. */
-    align-self: stretch !important;
-    height: auto !important;
+    margin-right: 0 !important;
+    margin-block: -6px !important;
+    height: 44px !important;
     min-width: 44px !important;
     min-height: 44px !important;
     padding: 0 !important;
@@ -956,24 +984,63 @@ export function buildOverlayCss(config: OverlayConfig): string {
 
 /* ---- session switcher strip ----------------------------------------------
    Rendered by overlay.js. Styles live here (unconditionally, so the strip is
-   never unstyled) but the element only ever mounts on narrow viewports. */
+   never unstyled) but the element only ever mounts on narrow viewports.
+
+   One row, not three. The phone had this strip, upstream's titlebar with its
+   own session tabs, and the session panel's title row -- three bands of chrome
+   above the transcript, two of them switching sessions. The strip is the one
+   that shows every session rather than only the open tabs and colours them by
+   state, so it is the one that stays; it grew a button for each titlebar
+   control it displaced (see overlay.js) and the titlebar is hidden below.
+
+   Only the chips scroll: buttons pinned either side would otherwise scroll away
+   exactly when they are wanted. */
 
 [data-oc-strip] {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
   border-bottom: 1px solid var(--border-weaker-base, rgba(127, 127, 127, 0.18));
   background: var(--v2-background-bg-deep, var(--background-base, transparent));
   font-family: var(--font-family-sans, system-ui, sans-serif);
 }
 
-[data-oc-strip]::-webkit-scrollbar {
+[data-oc-strip] > [data-oc-chips] {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+[data-oc-strip] > [data-oc-chips]::-webkit-scrollbar {
   display: none;
+}
+
+/* The two controls the hidden titlebar used to carry. Each clicks upstream's
+   real button, so these are proxies, not reimplementations. */
+[data-oc-strip] > [data-oc-nav] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-weak, #8a8a8a);
+}
+
+[data-oc-strip] > [data-oc-nav]:active {
+  background: var(--v2-background-bg-layer-01, rgba(127, 127, 127, 0.14));
 }
 
 [data-oc-strip][hidden] {
@@ -1059,5 +1126,5 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-oc-chip][data-oc-state="attention"] { color: #e0925d; background: rgba(224, 146, 93, 0.16); }
   [data-oc-chip][data-oc-state="error"]     { color: #e4695d; background: rgba(228, 105, 93, 0.16); }
 }
-${bubbles}${changes}${settings}${debugBadge}`;
+${bubbles}${titlebar}${changes}${settings}${debugBadge}`;
 }

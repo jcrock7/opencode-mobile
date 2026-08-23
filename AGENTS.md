@@ -503,14 +503,20 @@ signals.forEach((signal) => {
     timer rather than the next mutation -- a request upstream never renders must
     not sit invisible until something unrelated redraws. Same shape for anything
     else that fills a gap upstream might fill first.
-44. **Do Not Repeat A Control Upstream Already Shows**: the v2 layout has its own
-    titlebar session tabs, so the session strip listed every open session twice,
-    one row above the other. They are not the same *set* -- upstream shows open
-    tabs, the strip shows every recent session -- so the fix is to subtract, not
-    to delete: read the ids out of `[data-titlebar-tab-link]` hrefs, omit those,
-    and hide the strip when nothing is left. Related to #26, one level up: that
-    one is about a style upstream already applies, this one about a whole
-    control.
+44. **One Chrome Row Per Job**: the v2 layout has its own titlebar session tabs,
+    so the phone showed two session switchers stacked above the transcript (plus
+    the session panel's title row). Where two controls do one job, keep the
+    better one and have it absorb what the other carried -- the strip lists every
+    session and colours them by state, so the titlebar is hidden and the strip
+    grew Home and New buttons. Never just delete the row: that loses the controls
+    on it. Related to #26, one level up -- that is a style upstream already
+    applies, this is a whole control.
+45. **v2 Icons Are Identifiable Through Their Sprite `<use>`**: `IconButtonV2`
+    does not set `data-icon` (upstream has the line commented out), so a v2
+    icon button cannot be selected by what it depicts. But `IconV2` renders
+    `<use href="#opencode-v2-icon-NAME">` against an injected sprite, so the
+    name is in the DOM: find the `<use>` and `closest()` back to the button.
+    Do not fall back to `aria-label`, which is translated, or to position.
 
 ## Configuration
 

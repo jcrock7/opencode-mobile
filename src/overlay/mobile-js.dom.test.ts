@@ -62,6 +62,10 @@ interface Harness {
   trigger(value: string): HTMLElement | null;
   /** The session-strip chip labels, in order. */
   chips(): string[];
+  /** One of the strip's proxy nav buttons. */
+  nav(which: "home" | "new"): HTMLElement | null;
+  /** Clicks recorded on upstream's own titlebar icon buttons. */
+  titlebarClicks: string[];
   /** The injected ask dock, if it mounted. */
   ask(): HTMLElement | null;
   /** The dock's option buttons, in order. */
@@ -110,6 +114,8 @@ async function harness(
     withUpstreamDock?: boolean;
     /** Session ids upstream is showing as titlebar tabs. */
     openTabs?: string[];
+    /** Upstream's grid-plus / plus titlebar buttons. Present unless false. */
+    withTitlebarControls?: boolean;
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
@@ -148,14 +154,30 @@ async function harness(
     )
     .join("");
 
+  // Upstream's own titlebar controls, as IconButtonV2 really renders them: no
+  // data-icon (it is commented out upstream), but each icon is a <use> against
+  // a named sprite symbol, which is the only thing in the DOM that names it.
+  const iconButton = (name: string) =>
+    `<button data-component="icon-button-v2" data-icon-name="${name}">` +
+    `<svg data-slot="icon-svg"><use href="#opencode-v2-icon-${name}"></use></svg></button>`;
+  const titlebarControls =
+    options.withTitlebarControls === false ? "" : iconButton("grid-plus") + iconButton("plus");
+
   doc.body.innerHTML = `
     <div id="root">
-      <header>${tabStrip}</header>
+      <header data-slot="titlebar-v2">${titlebarControls}${tabStrip}</header>
       ${tabs}
       <div data-component="session-turn"><div data-slot="session-turn-content"></div></div>
       ${options.withDock === false ? "" : '<div data-component="session-prompt-dock"></div>'}
       ${options.withUpstreamDock ? '<div data-component="session-question-dock"></div>' : ""}
     </div>`;
+
+  const titlebarClicks: string[] = [];
+  for (const el of Array.from(doc.querySelectorAll("[data-component=\"icon-button-v2\"]"))) {
+    el.addEventListener("click", () => {
+      titlebarClicks.push(el.getAttribute("data-icon-name") ?? "");
+    });
+  }
 
   // Upstream's triggers are a real tab control: clicking one selects it and
   // deselects its sibling. Without that the toggle cannot be tested at all.
@@ -306,6 +328,9 @@ async function harness(
       doc.querySelector(`[data-slot="tabs-trigger"][data-value="${value}"]`) as HTMLElement | null,
     chips: () =>
       Array.from(doc.querySelectorAll("[data-oc-chip-label]")).map((el) => el.textContent ?? ""),
+    nav: (which: "home" | "new") =>
+      doc.querySelector(`[data-oc-nav="${which}"]`) as HTMLElement | null,
+    titlebarClicks,
     ask: () => {
       const el = doc.querySelector("[data-oc-ask]") as HTMLElement | null;
       return el && !el.hidden ? el : null;
@@ -491,9 +516,13 @@ describe("the session strip", () => {
     expect(h.strip()!.querySelectorAll("[data-oc-chip]").length).toBe(2);
   });
 
-  it("hides itself with only one session", async () => {
+  it("drops the chips with only one session, but keeps the bar", async () => {
+    // One session is not a switcher. The bar itself stays, because it carries
+    // the navigation and changes buttons now -- a row that came and went with
+    // the session count would move everything under it.
     h = await harness({ sessions: [SESSIONS[0]] });
-    expect(h.strip()!.hidden).toBe(true);
+    expect(h.chips()).toEqual([]);
+    expect(h.strip()!.hidden).toBe(false);
   });
 
   it("excludes child sessions", async () => {
@@ -525,58 +554,63 @@ describe("the session strip", () => {
   });
 });
 
-describe("not repeating upstream's own session tabs", () => {
-  // The v2 layout has its own session tab bar, so every session with a tab open
-  // was in two switchers at once, one directly above the other -- which reads
-  // as the same row rendered twice.
+describe("one row of chrome instead of three", () => {
+  // The phone had this strip, upstream's titlebar with its own session tabs,
+  // and the session panel's title row -- two of them switching sessions. The
+  // titlebar goes, so the strip has to carry what it carried.
 
-  it("omits a session upstream is already showing as a tab", async () => {
-    h = await harness({ openTabs: ["ses_a"] });
-    await h.flush();
+  it("puts Home and New on the strip", async () => {
+    h = await harness();
 
-    expect(h.chips()).toEqual(["Fix tunnel"]);
+    expect(h.nav("home")).not.toBeNull();
+    expect(h.nav("new")).not.toBeNull();
+    expect(h.nav("home")!.parentElement?.getAttribute("data-oc-strip")).toBe("");
   });
 
-  it("hides the strip entirely when every session has a tab", async () => {
-    // Nothing left to add, so it should not cost a row of screen either.
-    h = await harness({ openTabs: ["ses_a", "ses_b"] });
-    await h.flush();
+  it("keeps the buttons out of the scrolling region", async () => {
+    // Pinned either side of the chips, or they scroll away exactly when wanted.
+    h = await harness();
 
-    expect(h.strip()?.hidden).toBe(true);
+    expect(h.nav("home")!.parentElement?.hasAttribute("data-oc-chips")).toBe(false);
+    expect(h.document.querySelector("[data-oc-chip]")!.parentElement?.hasAttribute("data-oc-chips"))
+      .toBe(true);
   });
 
-  it("shows everything when upstream is showing no tabs", async () => {
-    h = await harness({ openTabs: [] });
-    await h.flush();
+  it("drives upstream's own Home button rather than reimplementing it", async () => {
+    // IconButtonV2 sets no data-icon, but every v2 icon renders a <use> against
+    // a named sprite symbol -- so the name is in the DOM either way.
+    h = await harness();
+    h.nav("home")!.click();
 
-    expect(h.chips()).toEqual(["Migrate auth", "Fix tunnel"]);
+    expect(h.titlebarClicks).toEqual(["grid-plus"]);
   });
 
-  it("reads the id out of the tab's own href, not a guess at its state", async () => {
-    // A tab whose href names no session must not silently exclude everything.
-    h = await harness({ openTabs: [] });
-    const header = h.document.querySelector("header")!;
-    header.innerHTML = '<a data-titlebar-tab-link href="/settings">Settings</a>';
-    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await h.flush();
+  it("drives upstream's own New button", async () => {
+    h = await harness();
+    h.nav("new")!.click();
 
-    expect(h.chips()).toEqual(["Migrate auth", "Fix tunnel"]);
+    expect(h.titlebarClicks).toEqual(["plus"]);
   });
 
-  it("follows the tabs as they change", async () => {
-    h = await harness({ openTabs: [] });
-    await h.flush();
-    expect(h.chips()).toHaveLength(2);
+  it("does nothing rather than throwing when the control is not there", async () => {
+    // An older build, or a layout that renders no titlebar at all.
+    h = await harness({ withTitlebarControls: false });
+    h.nav("home")!.click();
 
-    const header = h.document.querySelector("header")!;
-    const tab = h.document.createElement("a");
-    tab.setAttribute("data-titlebar-tab-link", "");
-    tab.setAttribute("href", "/L3RtcC9wcm9q/session/ses_b");
-    header.appendChild(tab);
-    await h.flush();
+    expect(h.titlebarClicks).toEqual([]);
+    expect(h.strip()).not.toBeNull();
+  });
 
-    expect(h.chips()).toEqual(["Migrate auth"]);
+  it("orders the row: Home, the sessions, New, changes", async () => {
+    h = await harness();
+    const order = Array.from(h.strip()!.children).map(
+      (el) =>
+        el.getAttribute("data-oc-nav") ??
+        (el.hasAttribute("data-oc-chips") ? "chips" : null) ??
+        (el.hasAttribute("data-oc-changes") ? "changes" : "?"),
+    );
+
+    expect(order).toEqual(["home", "chips", "new", "changes"]);
   });
 });
 
@@ -593,7 +627,7 @@ describe("resilience", () => {
     expect(h.status()).not.toBeNull();
   });
 
-  it("hides the strip when the session list cannot be read", async () => {
+  it("keeps the bar and its buttons when the session list cannot be read", async () => {
     const win = new Window({ url: "https://dev.example.org/d/session/ses_a", width: 390 });
     const w = win as unknown as Record<string, unknown>;
     w.EventSource = FakeEventSource;
@@ -611,8 +645,12 @@ describe("resilience", () => {
     win.eval(buildOverlayJs(CONFIG));
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 5));
 
-    const strip = (win.document as unknown as Document).querySelector("[data-oc-strip]") as HTMLElement;
-    expect(strip.hidden).toBe(true);
+    const doc = win.document as unknown as Document;
+    // No chips, since there is no list -- but the bar and its buttons stay, so
+    // a failed request does not strand you with no way to navigate.
+    expect(doc.querySelectorAll("[data-oc-chip]")).toHaveLength(0);
+    expect((doc.querySelector("[data-oc-strip]") as HTMLElement).hidden).toBe(false);
+    expect(doc.querySelector('[data-oc-nav="home"]')).not.toBeNull();
     await win.happyDOM?.close?.();
   });
 
@@ -1065,8 +1103,19 @@ describe("the changes button", () => {
   // above the timeline. It drives upstream's own triggers, because `mobileTab`
   // is local component state in session.tsx rather than a route.
 
-  it("mounts into the titlebar", async () => {
+  it("mounts onto the session strip", async () => {
+    // The strip replaced the titlebar on a phone, so this is where the rest of
+    // the chrome lives.
     h = await harness();
+    const button = h.changesButton();
+    expect(button).not.toBeNull();
+    expect(button!.parentElement?.getAttribute("data-oc-strip")).toBe("");
+  });
+
+  it("falls back to the titlebar when the strip is switched off", async () => {
+    // The titlebar is only hidden when the strip is on to replace it, so with
+    // the strip off the header is still there -- and still the right host.
+    h = await harness({ config: { sessionStrip: false } });
     const button = h.changesButton();
     expect(button).not.toBeNull();
     expect(button!.parentElement?.tagName.toLowerCase()).toBe("header");

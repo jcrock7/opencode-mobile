@@ -78,6 +78,17 @@ describe("overlay assets", () => {
   });
 
   describe("the stylesheet", () => {
+    it("hides upstream's titlebar, which the strip replaces", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('header[data-slot="titlebar-v2"]');
+    });
+
+    it("keeps the titlebar when the strip is switched off", () => {
+      // With no strip there would be nothing left to navigate with.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, sessionStrip: false })!.body;
+      expect(css).not.toContain("titlebar-v2");
+    });
+
     it("caps the blocking dock so its buttons stay on screen", () => {
       // Upstream caps the dock with var(--question-prompt-max-height, 100dvh)
       // and its own measure() REMOVES that variable when it cannot find the
@@ -394,17 +405,17 @@ describe("overlay assets", () => {
       expect(rule).toContain("bottom: 0 !important");
     });
 
-    it("puts the changes button on the same line as the tabs", () => {
-      // Stretching and centring the glyph inside matches how the tab strip
-      // centres its own contents, so the two agree by construction rather than
-      // by a tuned offset.
+    it("sizes the changes button to the strip's own row", () => {
+      // It sits on the session strip now, matched to the nav buttons either
+      // side of the chips. The negative block margin cancels the strip's
+      // padding, so a 44px target does not make the row 56px tall.
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       const rule = /\[data-oc-changes\]\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
       // Comments explain what was rejected and would match a naive search.
       const declarations = rule.replace(/\/\*[\s\S]*?\*\//g, "");
-      expect(declarations).toContain("align-self: stretch !important");
+      expect(declarations).toContain("margin-block: -6px !important");
+      expect(declarations).toContain("min-height: 44px !important");
       expect(declarations).toContain("align-items: center !important");
-      expect(declarations).not.toContain("align-self: center");
     });
 
     it("styles the changes button as a 44px target with a count badge", () => {
@@ -664,16 +675,19 @@ describe("overlay assets", () => {
 
     it("keeps every regex escape it wrote", () => {
       // Invariant: the script lives in a template literal, so a single
-      // backslash is consumed at build time. `/\\/session\\//` in the source
-      // shipped as `//session//` -- which is a comment, and broke the whole
-      // file. The doubled form is only visible on the built asset, which is why
-      // this asserts there.
+      // backslash is consumed at build time -- a *valid* escape resolves
+      // silently, an invalid one loses the backslash. Both have shipped:
+      // `/\\d+/` became `/d+/` and matched the "d" in "changed", and
+      // `/\\/session\\//` became `//session//`, which is a comment that took the
+      // rest of the file with it. Only the built asset shows it, so assert here.
       const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
-      expect(js).toContain("/\\/session\\/([^\\/?#]+)/.exec(href)");
-      expect(js).not.toContain("//session/");
-      // The same trap, twice caught: the changed-file badge shipped as /d+/.
       expect(js).toContain("/\\d+/");
       expect(js).not.toContain("/d+/");
+      // Every regex literal in the built script, with no lone backslash left.
+      for (const literal of js.match(/\/\\\\[^/\n]*\//g) ?? []) {
+        expect(literal).not.toMatch(/(^|[^\\])\\[dswb]/);
+      }
+      expect(js).not.toContain("//session/");
     });
 
     it("compiles to valid JavaScript", () => {

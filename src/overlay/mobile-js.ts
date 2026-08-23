@@ -188,6 +188,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var parentOf = Object.create(null);
 
   var strip = null;
+  var chips = null;
   var statusEl = null;
   var changesBtn = null;
   var changesWatch = null;
@@ -704,57 +705,25 @@ export function buildOverlayJs(config: OverlayConfig): string {
     return node;
   }
 
-  /**
-   * The sessions upstream is already showing as a titlebar tab.
-   *
-   * The v2 layout has its own session tab bar, so every session with a tab open
-   * was in two switchers at once, one directly above the other -- which reads
-   * as the same row rendered twice. Upstream's tabs are not the same SET as
-   * this strip (they are the open tabs; the strip is every recent session), so
-   * hiding the strip outright would cost the reach it adds. Showing only what
-   * upstream is not already showing costs nothing and removes the duplication
-   * -- and when every session has a tab, the strip has nothing to add and takes
-   * no room at all.
-   *
-   * Read from the tab's own link rather than any internal state: the href is
-   * the session route, which is the same thing routeParts() reads.
-   */
-  function openTabs() {
-    var out = Object.create(null);
-    var links = document.querySelectorAll("[data-titlebar-tab-link]");
-    for (var i = 0; i < links.length; i++) {
-      var href = links[i].getAttribute("href") || "";
-      var match = /\\/session\\/([^\\/?#]+)/.exec(href);
-      if (match) out[match[1]] = true;
-    }
-    return out;
-  }
-
   function render() {
-    if (!STRIP_ENABLED || !strip) return;
+    if (!STRIP_ENABLED || !strip || !chips) return;
 
     if (listFailed || sessions.length < 2) {
-      // One session is not a switcher, and a failed list should not leave an
-      // empty bar wasting a row of screen.
-      strip.hidden = true;
-      strip.textContent = "";
+      // One session is not a switcher. The strip itself stays: it carries the
+      // navigation and changes buttons now, and a row that comes and goes with
+      // the session count would move everything under it.
+      chips.textContent = "";
+      strip.hidden = false;
       return;
     }
 
     var route = routeParts();
-    var shown = openTabs();
-    var items = ordered().filter(function (item) { return !shown[item.id]; });
-    if (!items.length) {
-      // Everything is already a tab: the strip has nothing to add.
-      strip.hidden = true;
-      strip.textContent = "";
-      return;
-    }
+    var items = ordered();
     var next = document.createDocumentFragment();
     for (var i = 0; i < items.length; i++) next.appendChild(buildChip(items[i], route));
 
-    strip.textContent = "";
-    strip.appendChild(next);
+    chips.textContent = "";
+    chips.appendChild(next);
     strip.hidden = false;
   }
 
@@ -911,6 +880,59 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   /* ---------- session strip ---------- */
 
+  /* ---------- upstream's titlebar controls ----------
+
+     The phone had three rows of chrome saying the same thing: this strip, the
+     titlebar with its own session tabs, and the session panel's title row. The
+     strip and the tabs are both session switchers, so one has to go -- and the
+     strip is the one that shows every session rather than only the open tabs,
+     and colours them by state.
+
+     The titlebar's two controls have no equivalent here though, so taking that
+     row away without them would remove function: 'grid-plus' opens Home (the
+     project and session browser) and 'plus' starts a new session. So the strip
+     grows a button for each, and each one clicks upstream's real control rather
+     than reimplementing what it does -- the titlebar is hidden with
+     'display: none', which keeps those buttons in the DOM and clickable.
+
+     Identifying them is the interesting part. IconButtonV2 does not set
+     'data-icon' (upstream has it commented out), but every v2 icon renders
+     '<use href="#opencode-v2-icon-NAME">' against a sprite, so the name is in
+     the DOM regardless. Walk up from there to the button. */
+  function iconButton(name) {
+    var use = document.querySelector('header use[href="#opencode-v2-icon-' + name + '"]');
+    if (!use || typeof use.closest !== "function") return null;
+    return use.closest('[data-component="icon-button-v2"]');
+  }
+
+  var HOME_ICON =
+    '<svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="none"' +
+    ' stroke="currentColor" stroke-miterlimit="10" stroke-linecap="square">' +
+    '<path d="M13.9948 11.668H9.32812M11.6641 9.33203V13.9987M6.66667 9.33203V13.9987H2V9.33203H6.66667Z' +
+    'M6.66667 2V6.66667H2V2H6.66667ZM13.9948 2V6.66667H9.32812V2H13.9948Z"/>' +
+    "</svg>";
+
+  var PLUS_ICON =
+    '<svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="none"' +
+    ' stroke="currentColor" stroke-linejoin="round">' +
+    '<path d="M8 2.889V13.111M2.889 8H13.111"/>' +
+    "</svg>";
+
+  function navButton(name, icon, label) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("data-oc-nav", name);
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.innerHTML = icon;
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      var real = iconButton(name === "home" ? "grid-plus" : "plus");
+      if (real) real.click();
+    });
+    return button;
+  }
+
   function mount() {
     if (mounted && strip && strip.isConnected) return;
 
@@ -922,6 +944,14 @@ export function buildOverlayJs(config: OverlayConfig): string {
       strip.setAttribute("data-oc-strip", "");
       strip.setAttribute("aria-label", "Sessions");
       strip.hidden = true;
+
+      strip.appendChild(navButton("home", HOME_ICON, "Projects and sessions"));
+      // Only the chips scroll. The buttons either side are fixed, or they would
+      // scroll away exactly when they are wanted.
+      chips = document.createElement("div");
+      chips.setAttribute("data-oc-chips", "");
+      strip.appendChild(chips);
+      strip.appendChild(navButton("new", PLUS_ICON, "New session"));
     }
 
     point.parent.insertBefore(strip, point.before || null);
@@ -1015,9 +1045,12 @@ export function buildOverlayJs(config: OverlayConfig): string {
       renderChanges();
       return;
     }
-    // The app has exactly one <header>: the titlebar.
-    var header = document.querySelector("header");
-    if (!header || !tabTrigger("changes")) return;
+    // On the strip, which is where the rest of the chrome ended up. Falls back
+    // to upstream's <header> when there is no strip to hang it on: the titlebar
+    // is only hidden when the strip is switched ON to replace it, so with
+    // OPENCODE_MOBILE_OVERLAY_STRIP=0 the header is still there and visible.
+    var host = strip && strip.isConnected ? strip : document.querySelector("header");
+    if (!host || !tabTrigger("changes")) return;
 
     changesBtn = document.createElement("button");
     changesBtn.type = "button";
@@ -1030,7 +1063,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       // a Solid transition; re-read on the next tick rather than guessing.
       window.setTimeout(renderChanges, 0);
     });
-    header.appendChild(changesBtn);
+    host.appendChild(changesBtn);
 
     // The tab can also change without us -- opening a review comment switches
     // it -- so follow the trigger's own selected state.
