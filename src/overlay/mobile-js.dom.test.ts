@@ -1149,11 +1149,81 @@ describe("addressing the API the way the app does", () => {
     expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("sess 2");
   });
 
+  it("keeps only the addressing, discarding the caller's pagination", async () => {
+    // The observed failure: the app fetches
+    // '/session/<id>/message?limit=200&before=<cursor>'. Taking the whole query
+    // taught the overlay the pagination, which it then appended to '/session'
+    // -- asking the wrong question and getting an empty list back.
+    h = await harness({ config: { debug: true } });
+    await (h.window as unknown as { fetch: typeof fetch }).fetch(
+      "/session/ses_a/message?limit=200&before=cursor123&directory=%2Fhome%2Fdev%2Fmiser",
+    );
+    await h.flush();
+
+    const line = h.document.querySelector("[data-oc-diag]")?.textContent ?? "";
+    expect(line).toContain("ctx ?directory=");
+    expect(line).not.toContain("limit=");
+    expect(line).not.toContain("before=");
+
+    const ours = h.fetched.filter((call) => call.url.startsWith("/session?"));
+    expect(ours.length).toBeGreaterThan(0);
+    for (const call of ours) {
+      expect(call.url).not.toContain("limit=");
+      expect(call.url).not.toContain("before=");
+    }
+  });
+
+  it("does not let a paginated call unlearn a good context", async () => {
+    // The second observed failure: a later call carrying no directory replaced
+    // the working context with its own pagination.
+    h = await harness({ config: { debug: true } });
+    const appFetch = (h.window as unknown as { fetch: typeof fetch }).fetch;
+
+    await appFetch("/session?directory=%2Fhome%2Fdev%2Fmiser");
+    await h.flush();
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx ?directory=");
+
+    await appFetch("/session/ses_a/message?limit=20");
+    await h.flush();
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx ?directory=");
+  });
+
+  it("keeps a workspace parameter, which also selects an instance", async () => {
+    h = await harness({ config: { debug: true } });
+    await (h.window as unknown as { fetch: typeof fetch }).fetch(
+      "/session?workspace=ws_1&limit=50",
+    );
+    await h.flush();
+
+    const line = h.document.querySelector("[data-oc-diag]")?.textContent ?? "";
+    expect(line).toContain("workspace=ws_1");
+    expect(line).not.toContain("limit=");
+  });
+
+  it("relearns when the project changes", async () => {
+    h = await harness({ config: { debug: true } });
+    const appFetch = (h.window as unknown as { fetch: typeof fetch }).fetch;
+
+    await appFetch("/session?directory=%2Fa");
+    await h.flush();
+    await appFetch("/session?directory=%2Fb");
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("directory=%2Fb");
+  });
+
   it("ignores a call that teaches nothing", async () => {
     h = await harness({ config: { debug: true } });
     await (h.window as unknown as { fetch: typeof fetch }).fetch("/session");
     await h.flush();
     expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("ctx none");
+  });
+
+  it("reports the status endpoint's own code", async () => {
+    // /session/status is a forwarded route while GET /session is answered
+    // locally, so the two can fail independently.
+    h = await harness({ config: { debug: true } });
+    expect(h.document.querySelector("[data-oc-diag]")?.textContent).toContain("list 200/200");
   });
 
   it("ignores calls to paths that are not the session API", async () => {

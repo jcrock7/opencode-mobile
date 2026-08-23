@@ -966,6 +966,15 @@ header -- then use exactly the same addressing. That reaches the right instance
 by construction, whatever server, workspace or sidecar is behind it, and it keeps
 working if upstream changes how addressing is done.
 
+It learns **only the parameters that address an instance** -- `directory` and
+`workspace` -- and discards the rest. That distinction is the whole feature: the
+app's own calls carry plenty besides, and
+`/session/<id>/message?limit=200&before=<cursor>` is the common one. An earlier
+version took the whole query string, taught itself the pagination, appended that
+to `/session`, and got an empty list back -- it had learned to ask the wrong
+question, and overwritten a working context to do it. A call that addresses no
+instance now teaches nothing and cannot unlearn what a good one taught.
+
 The wrapper only ever delegates; a test asserts it never originates a request of
 its own. The `ctx` field in the debug readout shows what it learned.
 
@@ -1007,7 +1016,7 @@ route ses_abc123 | sess 2 | list 200 | sse open/47 message.part.updated | st bus
 | `route` | the session id parsed out of the URL | `NONE` -- the URL shape is not one the overlay recognises, so the status bar can never show |
 | `sess` | sessions the overlay's own `GET /session` returned | `0` or fewer than you have open -- the request is reaching a different OpenCode *instance* than the app is using |
 | `ctx` | the addressing learned from the app's own calls | `none` -- the app has not made a session call yet, or stopped carrying one; the overlay is querying unaddressed and will see nothing |
-| `list` | HTTP status of that request | not `200` -- the endpoint is refusing it |
+| `list` | HTTP status of `GET /session` and of `/session/status` | either not `200` -- that endpoint is refusing it. They are routed differently upstream (`GET /session` is answered locally, `/session/status` is forwarded) so they can fail independently |
 | `sse` | event-stream state / events received / last type | `error/0` or `open/0` -- no events are arriving, so nothing live can work |
 | `st` | the status map entry for this session | `-` while the session is clearly working -- `GET /session/status` is not answering for this instance |
 | `att` | a pending permission or question | `-` while the PC is showing a prompt -- the blocking event is not reaching this client |

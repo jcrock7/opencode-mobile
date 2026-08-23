@@ -205,6 +205,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var diagEl = null;
   var diagLast = "";
   var diagListStatus = "-";
+  var diagStatusCode = "-";
   var diagStreamState = "init";
   var diagEvents = 0;
   var diagLastEvent = "-";
@@ -258,9 +259,26 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (path.indexOf("/session") !== 0 && path.indexOf("/event") !== 0) return;
 
     var q = path.indexOf("?");
-    var search = q === -1 ? "" : path.slice(q);
+    var raw = q === -1 ? "" : path.slice(q + 1);
     var dir = headerValue(init, "x-opencode-directory");
-    // A call carrying neither teaches nothing.
+
+    // Keep ONLY the parameters that address an instance. The app's own calls
+    // carry plenty besides -- '/session/<id>/message?limit=200&before=<cursor>'
+    // is the common one -- and an earlier version of this took the whole query
+    // string. It then learned the pagination, appended it to '/session', and
+    // got an empty list back: it had taught itself to ask the wrong question,
+    // and overwrote a good context to do it.
+    var seen = new URLSearchParams(raw);
+    var keep = new URLSearchParams();
+    var directory = seen.get("directory");
+    var workspace = seen.get("workspace");
+    if (directory) keep.set("directory", directory);
+    if (workspace) keep.set("workspace", workspace);
+    var query = keep.toString();
+    var search = query ? "?" + query : "";
+
+    // A call that addresses no instance teaches nothing -- and must not be
+    // allowed to unlearn what a call that did taught us.
     if (!search && !dir) return;
 
     var changed = search !== apiSearch || dir !== apiDirectory;
@@ -304,7 +322,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     var line =
       "route " + (id ? id.slice(0, 12) : "NONE") +
       " | sess " + sessions.length +
-      " | list " + diagListStatus +
+      " | list " + diagListStatus + "/" + diagStatusCode +
       " | sse " + diagStreamState + "/" + diagEvents + " " + diagLastEvent +
       " | st " + (id && status[id] ? status[id] : "-") +
       " | att " + (id && attention[id] ? attention[id] : "-") +
@@ -330,6 +348,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       cache: "no-store"
     }).then(function (res) {
       if (path === "/session") diagListStatus = String(res.status);
+      if (path === "/session/status") diagStatusCode = String(res.status);
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json();
     });

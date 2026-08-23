@@ -390,7 +390,12 @@ signals.forEach((signal) => {
     heartbeats -- so the failure looks like an empty account, not a misrouted
     call. The overlay taps `window.fetch` to learn the addressing the app is
     already using and reuses it verbatim, event-stream URL included. Do not
-    reintroduce a guess; the proxy's default is only a backstop.
+    reintroduce a guess; the proxy's default is only a backstop. Learn ONLY the
+    addressing parameters (`directory`, `workspace`) -- taking a whole query
+    string picks up the caller's pagination, and appending
+    `?limit=200&before=<cursor>` to `/session` asks the wrong question and looks
+    like an empty account. A call that addresses nothing must never unlearn one
+    that did.
 28. **OpenCode Ships Two Event Schemas**: `packages/schema/src/` is current,
     `packages/schema/src/v1/` is the old one, and names differ in both the event
     and its fields -- `permission.v2.asked {action, resources}` versus
