@@ -9,6 +9,17 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
+- **`npm run preview`** renders the overlay in headless Chromium at phone size,
+  screenshots it and checks the geometry, so layout regressions are caught here
+  rather than on someone's phone. See
+  [Seeing the layout without a phone](#seeing-the-layout-without-a-phone).
+- Fixed: the session strip mounted outside the layout root that carries
+  `env(safe-area-inset-top)`, so on a Home Screen install it rendered under the
+  status bar. It also now moves when a better anchor appears instead of staying
+  where the first render put it.
+- Fixed: the ask dock took over a request upstream had already shown, because
+  the grace window ends *after* upstream's dock unmounts -- and answering it is
+  what unmounts it.
 - **One row of chrome instead of three.** Upstream's titlebar is hidden on a
   phone and the session strip takes over its Home and New buttons, so the two
   session switchers become one. See [Mobile web overlay](#mobile-web-overlay).
@@ -37,7 +48,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 817 tests with an enforced 85% coverage threshold
+- Test suite grown to 821 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -511,6 +522,43 @@ would reliably win.
 
 The overlay targets `data-component` / `data-slot` attributes. If a future OpenCode
 release renames one, that rule stops applying -- it does not break the page.
+
+## Seeing the layout without a phone
+
+```bash
+npm run preview          # screenshots + geometry checks
+PREVIEW_DEBUG=1 npm run preview
+```
+
+Every layout bug in this overlay has been a DOM or CSS fact: an element mounted
+outside the padded layout root and ended up under the status bar; a dock grew
+past the screen and put its Submit button below the fold; two docks rendered at
+once. None of them needed a phone to observe -- they needed *something* to render
+the page and measure it. The unit tests run in happy-dom, which has no layout
+engine at all: it will tell you an element exists and cannot tell you where it
+is.
+
+So `scripts/preview.mjs` renders the real built assets over a fixture of
+upstream's DOM in headless Chromium at 393x852, screenshots each scenario into
+`.preview/`, and asserts the geometry -- is the strip inside the padded root, is
+Submit on screen, is there ever more than one answer dock.
+
+**What it proves:** where things land, what covers what, what overflows, what is
+off screen, and how the overlay's own script behaves against that DOM.
+
+**What it does not:** upstream's real stylesheet is not there, so absolute pixel
+values are the fixture's rather than the app's -- which is why the assertions are
+about relationships (inside/outside, above/below, visible/clipped) that survive
+that. Solid's timing is not there either. And `env(safe-area-inset-*)` is always
+`0` in headless Chromium with no way to report a notch, so the notch is drawn as
+an overlay bar and the inset is simulated on the same element upstream pads; the
+check is structural, which is what actually broke.
+
+Every hook in `scripts/preview/fixture.html` was copied out of upstream's source,
+not guessed, and the file says where each came from. That matters: a fixture that
+invents markup is worse than no fixture, because it makes a wrong overlay look
+correct -- which is exactly how the double safe-area padding and the double
+bubble shipped.
 
 ## The settings screen on a phone
 

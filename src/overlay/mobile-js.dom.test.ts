@@ -601,6 +601,34 @@ describe("one row of chrome instead of three", () => {
     expect(h.strip()).not.toBeNull();
   });
 
+  it("mounts inside the layout root that carries the safe-area padding", async () => {
+    // The bug this fixes: anchorPoint()'s last resort was "#root, first child",
+    // which is OUTSIDE the padded layout container -- so on a Home Screen
+    // install the strip rendered under the status bar with the clock on top of
+    // the chips. It only showed up once the strip stopped hiding itself, since
+    // that fallback is what a cold load takes before the timeline exists.
+    h = await harness();
+    const header = h.document.querySelector('header[data-slot="titlebar-v2"]')!;
+
+    expect(h.strip()!.previousElementSibling).toBe(header);
+  });
+
+  it("moves to the titlebar anchor when it appears later", async () => {
+    // A cold load renders the shell before the session, so the first mount can
+    // land on a fallback. It has to move, not stay.
+    h = await harness({ withDock: false, withTabs: false });
+    const root = h.document.getElementById("root")!;
+    root.innerHTML = "";
+    await h.flush();
+    // Nothing to anchor to yet.
+    const header = h.document.createElement("header");
+    header.setAttribute("data-slot", "titlebar-v2");
+    root.appendChild(header);
+    await h.flush();
+
+    expect(h.strip()!.previousElementSibling).toBe(header);
+  });
+
   it("orders the row: Home, the sessions, New, changes", async () => {
     h = await harness();
     const order = Array.from(h.strip()!.children).map(
@@ -1931,6 +1959,52 @@ describe("answering from the phone", () => {
     await h.flush();
 
     expect(h.ask()).toBeNull();
+  });
+
+  it("does not take over a request upstream has already shown", async () => {
+    // The duplication as it actually reached the phone. Waiting for upstream
+    // was not enough: the wait ends AFTER its dock unmounts, and answering it
+    // is what unmounts it -- so ours appeared showing the request that had just
+    // been answered. Upstream showing a request once means it owns it.
+    h = await harness({
+      config: { askGraceMs: 0 },
+      pendingQuestions: [QUESTION],
+      withUpstreamDock: true,
+    });
+    await h.flush();
+    expect(h.ask()).toBeNull();
+
+    h.document.querySelector('[data-component="session-question-dock"]')!.remove();
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+  });
+
+  it("forgets that upstream owned a request once it is gone", async () => {
+    // Otherwise the note outlives the request and grows for the life of the
+    // page -- and a later request that happened to reuse an id would be
+    // suppressed for no reason.
+    h = await harness({
+      config: { askGraceMs: 0 },
+      pendingQuestions: [QUESTION],
+      withUpstreamDock: true,
+    });
+    await h.flush();
+    h.document.querySelector('[data-component="session-question-dock"]')!.remove();
+    // The request is answered and gone...
+    h.setResponder((url) => (url.startsWith("/question") ? [] : undefined));
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+    // ...and a fresh one arrives that upstream has not shown.
+    h.setResponder((url) => (url.startsWith("/question") ? [QUESTION] : undefined));
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.ask()).not.toBeNull();
   });
 
   it("stands down for good once upstream's dock arrives during the wait", async () => {

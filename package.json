@@ -100,7 +100,8 @@
     "test:watch": "vitest",
     "serve": "node scripts/serve.mjs",
     "print-config": "node scripts/print-global-config.mjs",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "preview": "npm run build --silent && node scripts/preview.mjs"
   },
   "engines": {
     "node": ">=18"

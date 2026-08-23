@@ -1,0 +1,200 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>overlay fixture</title>
+
+<!--
+  A stand-in for OpenCode's own page, at the fidelity the overlay depends on.
+
+  Every hook here was copied from upstream's source, not guessed: the layout
+  root and its two inset paddings from packages/app/src/pages/layout-new.tsx,
+  the titlebar's slot and its two IconButtonV2 controls (which set no data-icon,
+  so the only thing naming them is the sprite <use>) from
+  packages/app/src/components/titlebar.tsx, the tab triggers from session.tsx,
+  and the question dock from
+  packages/app/src/pages/session/composer/session-question-dock.tsx via
+  packages/session-ui/src/components/dock-prompt.tsx.
+
+  It is a fixture, so it proves DOM and CSS facts -- where an element lands,
+  what covers what, what overflows -- and nothing about Solid's timing or
+  upstream's own styles, which are not here. That is still most of what has
+  gone wrong.
+
+  Known fidelity gaps, so a screenshot is not over-read: upstream's real
+  stylesheet is absent, so anything the overlay does not itself set is this
+  file's guess -- the user-message bubble's width and the option label/description
+  stacking both look wrong here and are right in the app. Add a hook here only
+  after reading it out of upstream's source; a fixture that invents markup is
+  worse than no fixture, because it makes a wrong overlay look correct.
+-->
+
+<style>
+  /* Enough of upstream's shell for geometry to mean something. Deliberately
+     minimal: this is not a copy of their stylesheet. */
+  /* Replaced by scripts/preview.mjs so the harness owns the number; kept here
+     with a value so the fixture is still meaningful opened by hand. */
+  :root { --sim-inset-top: 59px; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0a0a0a; color: #e5e5e5;
+               font: 14px/1.5 -apple-system, system-ui, sans-serif; }
+  #root { height: 100vh; display: flex; flex-direction: column; }
+  header[data-slot="titlebar-v2"] {
+    display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 6px;
+    overflow: hidden; border-bottom: 1px solid #262626; flex: none;
+  }
+  [data-component="icon-button-v2"] {
+    width: 28px; height: 28px; display: inline-flex; align-items: center;
+    justify-content: center; border: 0; background: none; color: #8a8a8a;
+  }
+  [data-slot="titlebar-tab-item"] {
+    height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 6px;
+    border-radius: 6px; background: #1a1a1a; max-width: 14rem; overflow: hidden;
+    white-space: nowrap;
+  }
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  [data-slot="tabs-list"] { display: flex; gap: 4px; padding: 4px 8px; flex: none; }
+  [data-slot="tabs-trigger"] { height: 28px; padding: 0 10px; border: 0;
+                               border-radius: 6px; background: #1a1a1a; color: inherit; }
+  .scroll-view__viewport { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px; }
+  [data-component="session-turn"] { padding: 8px 0; }
+  [data-timeline-row] { padding: 6px 0; }
+  [data-component="session-prompt-dock"] {
+    flex: none; display: flex; flex-direction: column; align-items: center;
+    padding-bottom: 12px;
+  }
+  [data-component="session-prompt-dock"] > div { width: 100%; padding: 0 12px; }
+  [data-component="prompt-input-v2"] {
+    border: 1px solid #262626; border-radius: 12px; padding: 10px; min-height: 72px;
+  }
+
+  /* Upstream's question dock, with the cap that made Submit unreachable. */
+  [data-component="dock-prompt"][data-kind="question"] {
+    position: relative; display: flex; flex-direction: column; gap: 0;
+    min-height: 0; max-height: var(--question-prompt-max-height, 100dvh);
+    border: 1px solid #262626; border-radius: 12px; background: #111;
+  }
+  [data-dock-surface="shell"] { display: flex; flex-direction: column; gap: 16px;
+                                flex: 1; min-height: 0; padding: 8px 8px 0; }
+  [data-slot="question-content"] { display: flex; flex-direction: column; gap: 4px;
+                                   flex: 1; min-height: 0; }
+  [data-slot="question-text"] { padding: 0 10px; flex-shrink: 0; }
+  [data-slot="question-hint"] { padding: 0 10px; flex-shrink: 0; color: #8a8a8a; }
+  [data-slot="question-options"] { display: flex; flex-direction: column; gap: 6px;
+                                   margin-top: 12px; padding: 1px 1px 16px;
+                                   flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  [data-slot="question-option"] { display: flex; align-items: flex-start; gap: 12px;
+                                  padding: 8px 8px 8px 10px; background: #171717;
+                                  border: 1px solid #262626; border-radius: 8px;
+                                  color: inherit; text-align: left; }
+  [data-dock-surface="tray"] { display: flex; align-items: center;
+                               justify-content: space-between; gap: 8px; padding: 8px; }
+  [data-component="button-v2"] { height: 32px; padding: 0 12px; border: 0;
+                                 border-radius: 8px; background: #262626; color: inherit; }
+
+  /* The device's status bar, drawn so a screenshot shows what it covers. The
+     real one is not part of the page; this is here to make an overlap visible,
+     not to emulate env(). */
+  /* Upstream pads its layout root with env(safe-area-inset-top). Headless
+     Chromium always reports 0 for that and offers no way to simulate a display
+     cutout, so honour a simulated inset on the same element -- the point is to
+     reproduce the consequence (content starts N px down) so an element mounted
+     ABOVE this root is visibly under the status bar. */
+  #layout-root { padding-top: max(env(safe-area-inset-top, 0px), var(--sim-inset-top, 0px)) !important; }
+
+  #sim-status-bar { position: fixed; top: 0; left: 0; right: 0; height: var(--sim-inset-top, 0px);
+                    background: rgba(255,0,80,.28); z-index: 2147483646; pointer-events: none;
+                    font: 700 9px/1 ui-monospace, monospace; color: #fff; text-align: right;
+                    padding: 4px 6px; }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="opencode-v2-icon-grid-plus" viewBox="0 0 16 16"><path d="M13.9948 11.668H9.32812M11.6641 9.33203V13.9987M6.66667 9.33203V13.9987H2V9.33203H6.66667ZM6.66667 2V6.66667H2V2H6.66667ZM13.9948 2V6.66667H9.32812V2H13.9948Z" stroke="currentColor" fill="none"/></symbol>
+  <symbol id="opencode-v2-icon-plus" viewBox="0 0 16 16"><path d="M8 2.889V13.111M2.889 8H13.111" stroke="currentColor" fill="none"/></symbol>
+</defs></svg>
+
+<div id="root">
+  <!-- layout-new.tsx: the padded root. Anything mounted ABOVE this is under
+       the notch on a Home Screen install. -->
+  <div id="layout-root" style="padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); flex: 1; min-height: 0; display: flex; flex-direction: column;">
+    <header data-slot="titlebar-v2">
+      <button data-component="icon-button-v2" aria-label="Projects and sessions">
+        <svg data-slot="icon-svg" width="16" height="16" viewBox="0 0 16 16"><use href="#opencode-v2-icon-grid-plus"></use></svg>
+      </button>
+      <div data-titlebar-tab data-slot="titlebar-tab-item">
+        <a data-titlebar-tab-link href="/L3RtcC9wcm9q/session/ses_a">Navbar scrollbar fix &amp; delete account</a>
+      </div>
+      <div data-titlebar-tab data-slot="titlebar-tab-item">
+        <a data-titlebar-tab-link href="/L3RtcC9wcm9q/session/ses_b">Miser Build</a>
+      </div>
+      <button data-component="icon-button-v2" aria-label="New session">
+        <svg data-slot="icon-svg" width="16" height="16" viewBox="0 0 16 16"><use href="#opencode-v2-icon-plus"></use></svg>
+      </button>
+    </header>
+
+    <main>
+      <div data-component="tabs">
+        <div data-slot="tabs-list">
+          <div data-slot="tabs-trigger-wrapper" data-value="session">
+            <button data-slot="tabs-trigger" data-value="session" aria-selected="true">Session</button>
+          </div>
+          <div data-slot="tabs-trigger-wrapper" data-value="changes">
+            <button data-slot="tabs-trigger" data-value="changes" aria-selected="false">3 files changed</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="scroll-view__viewport">
+        <div data-component="session-turn">
+          <div data-timeline-row="UserMessage" data-component="user-message">
+            <div data-slot="user-message-text">Present a simple question to test notifications</div>
+          </div>
+          <div data-timeline-row="AssistantPart">
+            <div data-component="markdown">
+              Note: <code>pip</code> / <code>pytest</code> weren't installed in the env, so I
+              bootstrapped them (user-scoped) to run the suite.
+            </div>
+          </div>
+          <div data-timeline-row="AssistantPart">
+            <div data-component="tool-trigger">
+              <span data-slot="basic-tool-tool-subtitle">packages/app/src/components/titlebar-tab-nav.tsx</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div data-component="session-prompt-dock">
+        <div>
+          <div id="upstream-dock-slot"></div>
+          <div data-component="prompt-input-v2">Ask anything, / for commands, @ for context...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="sim-status-bar">status bar</div>
+
+<template id="upstream-question-dock">
+  <div data-component="session-question-dock">
+    <div data-component="dock-prompt" data-kind="question">
+      <div data-dock-surface="shell" data-slot="question-body">
+        <div data-slot="question-header">
+          <div data-slot="question-header-title">1 of 1 questions</div>
+        </div>
+        <div data-slot="question-content">
+          <div data-slot="question-text">An account's transactions reference it by foreign key, so the account row cannot be deleted while keeping those transactions. What should "keep the data" mean when deleting an account?</div>
+          <div data-slot="question-hint">Select one answer</div>
+          <div data-slot="question-options">
+            <button data-slot="question-option"><span data-slot="option-label">Soft-delete, keep data (Recommended)</span><span data-slot="option-description">Keep data (default) deactivates the account so it is hidden from the import selector, but all transactions and history stay intact. Delete data hard-deletes the account and everything tied to it.</span></button>
+            <button data-slot="question-option"><span data-slot="option-label">Only allow delete when no data</span><span data-slot="option-description">Accounts with transactions cannot be deleted at all; the keep/delete-data choice only appears when there is no data.</span></button>
+            <button data-slot="question-option" data-custom="true"><span data-slot="option-label">Type your own answer</span><span data-slot="option-description">Type your answer...</span></button>
+          </div>
+        </div>
+      </div>
+      <div data-dock-surface="tray" data-slot="question-footer">
+        <button data-component="button-v2">Dismiss</button>
+        <button data-component="button-v2">Submit</button>
+      </div>
+    </div>
+  </div>
+</template>

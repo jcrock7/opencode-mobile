@@ -517,6 +517,28 @@ signals.forEach((signal) => {
     `<use href="#opencode-v2-icon-NAME">` against an injected sprite, so the
     name is in the DOM: find the `<use>` and `closest()` back to the button.
     Do not fall back to `aria-label`, which is translated, or to position.
+46. **Look At It Before Handing It Over**: `npm run preview` renders the built
+    assets over `scripts/preview/fixture.html` in headless Chromium at 393x852,
+    screenshots each scenario to `.preview/` and asserts geometry. happy-dom has
+    no layout engine, so the unit suite cannot see "under the status bar",
+    "below the fold" or "covered by". Run it after any CSS change or anything
+    that moves an element. Add fixture hooks only by copying them out of
+    upstream's source -- a fixture that invents markup makes a wrong overlay
+    look correct, which is how the double safe-area padding shipped.
+47. **Mount Inside The Padded Layout Root**: `layout-new.tsx` puts
+    `padding-top/bottom: env(safe-area-inset-*)` on its own container, which is
+    a child of `#root`. Anything inserted as `#root`'s first child is therefore
+    ABOVE that padding and renders under the notch on a Home Screen install.
+    Anchor to `header[data-slot="titlebar-v2"]` (inside the padded root) and
+    re-anchor when a better target appears -- a cold load renders the shell
+    before the timeline, so the first mount often takes a fallback and must not
+    stay there.
+48. **Upstream Owning A Request Is Sticky**: standing down while upstream's dock
+    is on screen is not enough, because the moment that decides it -- ours
+    rendering -- comes after the dock unmounts, and answering is what unmounts
+    it. Record the request id the first time upstream is seen showing it and
+    never render ours for that id; clear the note when the request leaves the
+    pending list, so the map tracks state rather than growing.
 
 ## Configuration
 

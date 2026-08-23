@@ -12,3 +12,6 @@ coverage/
 *.tsbuildinfo
 .opencode/
 .sisyphus/
+
+# scripts/preview.mjs output
+.preview/

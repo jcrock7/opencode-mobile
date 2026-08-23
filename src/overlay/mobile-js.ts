@@ -189,6 +189,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   var strip = null;
   var chips = null;
+  var anchorKind = "";
   var statusEl = null;
   var changesBtn = null;
   var changesWatch = null;
@@ -546,6 +547,17 @@ export function buildOverlayJs(config: OverlayConfig): string {
       getPending("/question", function (v) { diagPendQ = v; }),
       getPending("/permission", function (v) { diagPendP = v; })
     ]).then(function (results) {
+      // Drop the "upstream owns this" notes for requests that no longer exist,
+      // so the map tracks what is pending rather than growing for the life of
+      // the page.
+      var live = Object.create(null);
+      for (var q = 0; q < pendingQuestions.length; q++) live[pendingQuestions[q].id] = true;
+      for (var r = 0; r < pendingPermissions.length; r++) live[pendingPermissions[r].id] = true;
+      var owned = Object.keys(askOwned);
+      for (var o = 0; o < owned.length; o++) {
+        if (!live[owned[o]]) delete askOwned[owned[o]];
+      }
+
       var kinds = ["question", "permission"];
       for (var k = 0; k < results.length; k++) {
         var items = results[k];
@@ -650,11 +662,31 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   /* ---------- dom ---------- */
 
+  /**
+   * Where the strip goes, best option first.
+   *
+   * Straight after upstream's titlebar is the right answer: that is the row the
+   * strip replaces, and -- the part that matters -- it is INSIDE the layout root
+   * that carries 'padding-top: env(safe-area-inset-top)'. The old first choice
+   * was 'before the first session-turn', with '#root' first child as a fallback,
+   * and that fallback is outside the padded root: mount there on a phone
+   * installed to the Home Screen and the strip renders under the status bar,
+   * with the clock sitting on top of the chips. It only ever showed up once the
+   * strip stopped hiding itself, because the fallback is taken when the
+   * timeline has not rendered yet -- which is most of a cold load.
+   *
+   * Each returns a 'kind' so the mounted strip can be moved when a better
+   * anchor turns up, rather than staying wherever the first render put it.
+   */
   function anchorPoint() {
+    var header = document.querySelector('header[data-slot="titlebar-v2"]');
+    if (header && header.parentNode) {
+      return { kind: "titlebar", parent: header.parentNode, before: header.nextSibling };
+    }
     var turn = document.querySelector('[data-component="session-turn"]');
-    if (turn && turn.parentNode) return { parent: turn.parentNode, before: turn };
+    if (turn && turn.parentNode) return { kind: "turn", parent: turn.parentNode, before: turn };
     var root = document.getElementById("root");
-    if (root) return { parent: root, before: root.firstChild };
+    if (root) return { kind: "root", parent: root, before: root.firstChild };
     return null;
   }
 
@@ -934,10 +966,10 @@ export function buildOverlayJs(config: OverlayConfig): string {
   }
 
   function mount() {
-    if (mounted && strip && strip.isConnected) return;
-
     var point = anchorPoint();
     if (!point) return;
+    // Already mounted, and nowhere better to be.
+    if (mounted && strip && strip.isConnected && point.kind === anchorKind) return;
 
     if (!strip) {
       strip = document.createElement("nav");
@@ -955,6 +987,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     }
 
     point.parent.insertBefore(strip, point.before || null);
+    anchorKind = point.kind;
     mounted = true;
     render();
   }
@@ -1353,6 +1386,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
    * upstream never renders would sit invisible until something else happened to
    * redraw.
    */
+  // Requests upstream has shown its own dock for. Never ours to render.
+  var askOwned = Object.create(null);
   var askSeenId = "";
   var askSeenAt = 0;
   var askGrace = null;
@@ -1369,9 +1404,27 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (!ASK_ENABLED || !askEl) return;
     var current = askFor();
 
-    if (!current || upstreamDock()) {
+    if (!current) {
       askSeenId = "";
       askSeenAt = 0;
+      hideAsk();
+      return;
+    }
+
+    if (upstreamDock()) {
+      // Upstream is showing this one, so it owns it -- for good, not just while
+      // its dock happens to be on screen. Waiting alone was not enough: the
+      // wait ends AFTER the dock unmounts, which is what answering it does, so
+      // ours then appeared showing the request that had just been answered. The
+      // pending list is refetched, but there is a window before that lands.
+      askOwned[current.item.id] = true;
+      askSeenId = "";
+      askSeenAt = 0;
+      hideAsk();
+      return;
+    }
+
+    if (askOwned[current.item.id]) {
       hideAsk();
       return;
     }
@@ -1688,8 +1741,10 @@ export function buildOverlayJs(config: OverlayConfig): string {
       try {
         if (active()) {
           if (STRIP_ENABLED) {
-            if (!strip || !strip.isConnected) mount();
-            else render();
+            // mount() is a no-op when the strip is already in the best place;
+            // it moves it when a better anchor has appeared since.
+            mount();
+            render();
           }
           if (!statusEl || !statusEl.isConnected) mountStatus();
           else renderStatus();
