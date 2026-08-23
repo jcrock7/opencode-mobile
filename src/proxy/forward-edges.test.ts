@@ -16,6 +16,7 @@ import {
   buildRequestHeaders,
   buildResponseHeaders,
   wantsHtml,
+  namesDirectory,
   MAX_HTML_BYTES,
   DEFAULT_TARGET_HOST,
   type ForwardOptions,
@@ -135,6 +136,136 @@ describe("constants and header helpers", () => {
     // Node only produces an array for a few headers, but the guard must hold.
     const req = { headers: { accept: ["text/html"] } } as unknown as http.IncomingMessage;
     expect(wantsHtml(req)).toBe(false);
+  });
+});
+
+describe("the instance directory", () => {
+  // OpenCode resolves an instance per request from `?directory=` or
+  // `x-opencode-directory`. A request with neither lands on an instance that
+  // knows about nothing: the overlay's own `GET /session` answered 200 with an
+  // empty array and its event stream carried only heartbeats. The overlay
+  // cannot fix that itself -- EventSource cannot set headers, and the v2 route
+  // encodes a server key rather than a directory -- so the proxy supplies it.
+
+  it("recognises a directory in the query string", () => {
+    const req = { headers: {}, url: "/session?directory=%2Fhome%2Fdev%2Fmiser" } as http.IncomingMessage;
+    expect(namesDirectory(req)).toBe(true);
+  });
+
+  it("recognises a directory in the header", () => {
+    const req = {
+      headers: { "x-opencode-directory": "/home/dev/miser" },
+      url: "/session",
+    } as unknown as http.IncomingMessage;
+    expect(namesDirectory(req)).toBe(true);
+  });
+
+  it("reports a request that names none", () => {
+    expect(namesDirectory({ headers: {}, url: "/session" } as http.IncomingMessage)).toBe(false);
+    expect(namesDirectory({ headers: {}, url: "/session?limit=5" } as http.IncomingMessage)).toBe(false);
+    expect(namesDirectory({ headers: {}, url: "" } as http.IncomingMessage)).toBe(false);
+  });
+
+  it("does not mistake another parameter for a directory", () => {
+    const req = { headers: {}, url: "/session?directoryish=1" } as http.IncomingMessage;
+    expect(namesDirectory(req)).toBe(false);
+  });
+
+  it("adds the default when the request names none", () => {
+    const req = { headers: { host: "x" }, url: "/session", socket: {} } as unknown as http.IncomingMessage;
+    const headers = buildRequestHeaders(req, false, "/home/dev/miser");
+    expect(headers["x-opencode-directory"]).toBe("/home/dev/miser");
+  });
+
+  it("never overrides a directory the caller chose", () => {
+    // A default, not an override: the app always sends its own, and hijacking
+    // it would point the whole UI at the wrong project.
+    const req = {
+      headers: { "x-opencode-directory": "/home/dev/other" },
+      url: "/session",
+      socket: {},
+    } as unknown as http.IncomingMessage;
+    const headers = buildRequestHeaders(req, false, "/home/dev/miser");
+    expect(headers["x-opencode-directory"]).toBe("/home/dev/other");
+  });
+
+  it("leaves a query-string directory alone", () => {
+    const req = {
+      headers: {},
+      url: "/session?directory=%2Fhome%2Fdev%2Fother",
+      socket: {},
+    } as unknown as http.IncomingMessage;
+    const headers = buildRequestHeaders(req, false, "/home/dev/miser");
+    expect(headers["x-opencode-directory"]).toBeUndefined();
+  });
+
+  it("adds nothing when no default is configured", () => {
+    const req = { headers: {}, url: "/session", socket: {} } as unknown as http.IncomingMessage;
+    const headers = buildRequestHeaders(req, false);
+    expect("x-opencode-directory" in headers).toBe(false);
+  });
+
+  it("reaches OpenCode on a real forwarded request", async () => {
+    let seen: string | undefined;
+    await harness(
+      (req, res) => {
+        seen = req.headers["x-opencode-directory"] as string | undefined;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("[]");
+      },
+      { defaultDirectory: "/home/dev/miser" },
+    );
+
+    await get("/session");
+    expect(seen).toBe("/home/dev/miser");
+  });
+
+  it("reaches OpenCode on an upgrade too", async () => {
+    // The event stream is the case that matters most and the one the overlay
+    // could never fix for itself.
+    let seen: string | undefined;
+    const server = http.createServer();
+    const sockets: Array<{ destroy: () => void }> = [];
+    server.on("upgrade", (req, socket) => {
+      seen = req.headers["x-opencode-directory"] as string | undefined;
+      sockets.push(socket);
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+      socket.on("error", () => socket.destroy());
+    });
+    const upstreamPort = await listen(server);
+    upstream = server;
+
+    const options: ForwardOptions = {
+      targetPort: upstreamPort,
+      overlay: OVERLAY,
+      cssPath: OVERLAY_CSS_PATH,
+      jsPath: OVERLAY_JS_PATH,
+      defaultDirectory: "/home/dev/miser",
+    };
+    proxy = http.createServer();
+    proxy.on("upgrade", (req, socket, head) => forwardUpgrade(req, socket, head, options));
+    proxyPort = await listen(proxy);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request({
+          host: "127.0.0.1",
+          port: proxyPort,
+          path: "/event",
+          headers: { connection: "Upgrade", upgrade: "websocket" },
+        });
+        req.on("upgrade", (_res, socket) => {
+          sockets.push(socket);
+          socket.on("error", () => socket.destroy());
+          resolve();
+        });
+        req.on("error", reject);
+        req.end();
+      });
+      expect(seen).toBe("/home/dev/miser");
+    } finally {
+      for (const s of sockets) s.destroy();
+    }
   });
 });
 

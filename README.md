@@ -940,6 +940,29 @@ binary is unused either way.
 Install `cloudflared` itself with your system package manager (`brew install
 cloudflared`, or Cloudflare's apt/yum repo), not through npm.
 
+### The session strip and status bar were always empty
+
+Fixed, but worth knowing because it explains a whole class of symptom.
+
+OpenCode's server is **instance-per-request**: it works out which project a call
+belongs to from `?directory=` or the `x-opencode-directory` header. Its own web
+app always sends one. The overlay's calls did not, so they landed on an instance
+that knew about nothing -- `GET /session` answered **200 with an empty array**,
+and the event stream stayed open delivering only `server.heartbeat`. Everything
+the overlay renders from live data was therefore permanently blank: no session
+strip (it hides below two sessions, and it was seeing zero), no status bar, and
+no amber "needs you" for a pending permission or question.
+
+The overlay cannot fix this for itself. `EventSource` cannot set a request
+header, and the v2 route encodes a *server key* rather than a directory, so
+there is nothing to read the project out of on the client.
+
+The proxy supplies it instead: the plugin knows which instance it was loaded
+for, and adds `x-opencode-directory` to any forwarded request that names none --
+including upgrades, which is what the event stream needs. Strictly a default,
+never an override, because the app's own calls carry their own directory and
+hijacking one would point the whole UI at the wrong project.
+
 ### The overlay is running but a feature is missing
 
 `OPENCODE_MOBILE_OVERLAY_DEBUG=1` puts a purple line at the foot of the screen

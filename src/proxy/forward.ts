@@ -34,6 +34,25 @@ export interface ForwardOptions {
   jsPath?: string;
   /** Buffer ceiling for HTML rewriting. Defaults to MAX_HTML_BYTES. */
   maxHtmlBytes?: number;
+  /**
+   * Instance directory to fall back to when a request names none.
+   *
+   * OpenCode's server is instance-per-request: it resolves which project a call
+   * belongs to from `?directory=` or `x-opencode-directory`, and a request with
+   * neither lands on an instance that knows about nothing. Its own web app
+   * always sends one, so this never mattered until the overlay started making
+   * calls of its own -- `GET /session` answered 200 with an empty array, and
+   * the event stream delivered heartbeats and nothing else.
+   *
+   * The overlay cannot fix this for itself: `EventSource` cannot set headers,
+   * and the v2 route encodes a server key rather than a directory, so there is
+   * nothing to read the project out of. The proxy can, because the plugin knows
+   * which instance it was loaded for.
+   *
+   * Applied ONLY when the request names no directory, so it is a default and
+   * never an override.
+   */
+  defaultDirectory?: string;
 }
 
 type OutgoingHeaders = Record<string, string | string[]>;
@@ -45,7 +64,20 @@ type OutgoingHeaders = Record<string, string | string[]>;
  * rewrite the body, and we cannot rewrite compressed bytes. Assets and event
  * streams keep their compression.
  */
-export function buildRequestHeaders(req: http.IncomingMessage, stripEncoding: boolean): OutgoingHeaders {
+/** True when the request already says which instance it means. */
+export function namesDirectory(req: http.IncomingMessage): boolean {
+  if (req.headers["x-opencode-directory"] !== undefined) return true;
+  const url = req.url ?? "";
+  const query = url.slice(url.indexOf("?") + 1);
+  if (url.indexOf("?") === -1) return false;
+  return new URLSearchParams(query).has("directory");
+}
+
+export function buildRequestHeaders(
+  req: http.IncomingMessage,
+  stripEncoding: boolean,
+  defaultDirectory?: string,
+): OutgoingHeaders {
   const headers: OutgoingHeaders = {};
   for (const [key, value] of Object.entries(req.headers)) {
     if (value === undefined) continue;
@@ -53,6 +85,11 @@ export function buildRequestHeaders(req: http.IncomingMessage, stripEncoding: bo
   }
 
   if (stripEncoding) delete headers["accept-encoding"];
+
+  // Only when the caller named none: a default, never an override.
+  if (defaultDirectory && !namesDirectory(req)) {
+    headers["x-opencode-directory"] = defaultDirectory;
+  }
 
   const remote = req.socket?.remoteAddress;
   if (remote) headers["x-forwarded-for"] = remote;
@@ -122,7 +159,7 @@ export function forwardRequest(
       port: options.targetPort,
       path: req.url || "/",
       method: req.method,
-      headers: buildRequestHeaders(req, wantsHtml(req)),
+      headers: buildRequestHeaders(req, wantsHtml(req), options.defaultDirectory),
     },
     (proxyRes) => {
       const headers = buildResponseHeaders(proxyRes.headers);
@@ -209,7 +246,7 @@ export function forwardUpgrade(
     port: options.targetPort,
     path: req.url || "/",
     method: req.method,
-    headers: buildRequestHeaders(req, false),
+    headers: buildRequestHeaders(req, false, options.defaultDirectory),
   });
 
   proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {

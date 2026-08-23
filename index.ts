@@ -746,7 +746,11 @@ async function handleTunnel(
  * Start LAN-only HTTP server
  * Returns true if server started successfully, false if port was in use
  */
-async function startServer(port: number, openCodePort: number): Promise<boolean> {
+async function startServer(
+  port: number,
+  openCodePort: number,
+  defaultDirectory?: string,
+): Promise<boolean> {
   return new Promise((resolve) => {
     const overlay = loadOverlayConfig();
     const auth = loadAuthConfig();
@@ -757,6 +761,9 @@ async function startServer(port: number, openCodePort: number): Promise<boolean>
       overlay: overlay.enabled ? overlay : null,
       cssPath: OVERLAY_CSS_PATH,
       jsPath: overlay.sessionStrip ? OVERLAY_JS_PATH : undefined,
+      // See ForwardOptions.defaultDirectory. This is the instance the plugin
+      // itself was loaded for, which is the one the phone is looking at.
+      defaultDirectory,
     };
 
     httpServer = http.createServer((clientReq, clientRes) => {
@@ -909,8 +916,18 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
 
   debugLog("[DEV] openCodePort:", openCodePort, "| pluginPort:", pluginPort);
 
+  // The instance this plugin was loaded for. OpenCode resolves an instance per
+  // request from `?directory=` or `x-opencode-directory`, so anything that asks
+  // for neither -- the overlay's own fetches, and its EventSource, which cannot
+  // set a header at all -- lands on an instance that knows about nothing.
+  const instanceDirectory =
+    (typeof (ctx as any)?.directory === "string" && (ctx as any).directory) ||
+    (typeof (ctx as any)?.worktree === "string" && (ctx as any).worktree) ||
+    undefined;
+  debugLog("[PushPlugin] instance directory:", instanceDirectory ?? "(unknown)");
+
   // Start LAN-only server
-  const serverStarted = await startServer(pluginPort, openCodePort);
+  const serverStarted = await startServer(pluginPort, openCodePort, instanceDirectory);
 
   // Only start tunnel if server started successfully (port wasn't in use)
   if (!serverStarted) {
