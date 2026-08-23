@@ -4,7 +4,7 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, askDock: true, maxWidth: 767, debug: false };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, askDock: true, askGraceMs: 2500, maxWidth: 767, debug: false };
 
 /** Remove every balanced @media block, leaving only unconditional rules. */
 function stripMediaBlocks(css: string): string {
@@ -660,6 +660,20 @@ describe("overlay assets", () => {
       expect(js).toContain("var MAX_WIDTH = 767;");
       expect(js).toContain("var STRIP_ENABLED = true;");
       expect(js).toContain("var STATUS_ENABLED = true;");
+    });
+
+    it("keeps every regex escape it wrote", () => {
+      // Invariant: the script lives in a template literal, so a single
+      // backslash is consumed at build time. `/\\/session\\//` in the source
+      // shipped as `//session//` -- which is a comment, and broke the whole
+      // file. The doubled form is only visible on the built asset, which is why
+      // this asserts there.
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      expect(js).toContain("/\\/session\\/([^\\/?#]+)/.exec(href)");
+      expect(js).not.toContain("//session/");
+      // The same trap, twice caught: the changed-file badge shipped as /d+/.
+      expect(js).toContain("/\\d+/");
+      expect(js).not.toContain("/d+/");
     });
 
     it("compiles to valid JavaScript", () => {

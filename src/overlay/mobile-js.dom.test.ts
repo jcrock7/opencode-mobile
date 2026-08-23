@@ -24,6 +24,9 @@ const CONFIG: OverlayConfig = {
   bubbles: true,
   changesButton: true,
   askDock: true,
+  // Collapsed for most tests: the race the wait exists for has its own tests,
+  // and every other one would otherwise sit out 2.5 real seconds.
+  askGraceMs: 0,
   maxWidth: 767,
   debug: false,
 };
@@ -57,6 +60,8 @@ interface Harness {
   changesButton(): HTMLElement | null;
   /** One of upstream's own tab triggers. */
   trigger(value: string): HTMLElement | null;
+  /** The session-strip chip labels, in order. */
+  chips(): string[];
   /** The injected ask dock, if it mounted. */
   ask(): HTMLElement | null;
   /** The dock's option buttons, in order. */
@@ -103,6 +108,8 @@ async function harness(
     pendingPermissions?: Array<{ id: string; sessionID: string }>;
     /** Put upstream's own question dock on the page, as a desktop width does. */
     withUpstreamDock?: boolean;
+    /** Session ids upstream is showing as titlebar tabs. */
+    openTabs?: string[];
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
@@ -133,9 +140,17 @@ async function harness(
         </div>
       </div>`;
 
+  const tabStrip = (options.openTabs ?? [])
+    .map(
+      (id) =>
+        `<div data-titlebar-tab data-slot="titlebar-tab-item">` +
+        `<a data-titlebar-tab-link href="/L3RtcC9wcm9q/session/${id}">${id}</a></div>`,
+    )
+    .join("");
+
   doc.body.innerHTML = `
     <div id="root">
-      <header></header>
+      <header>${tabStrip}</header>
       ${tabs}
       <div data-component="session-turn"><div data-slot="session-turn-content"></div></div>
       ${options.withDock === false ? "" : '<div data-component="session-prompt-dock"></div>'}
@@ -289,6 +304,8 @@ async function harness(
     changesButton: () => doc.querySelector("[data-oc-changes]") as HTMLElement | null,
     trigger: (value: string) =>
       doc.querySelector(`[data-slot="tabs-trigger"][data-value="${value}"]`) as HTMLElement | null,
+    chips: () =>
+      Array.from(doc.querySelectorAll("[data-oc-chip-label]")).map((el) => el.textContent ?? ""),
     ask: () => {
       const el = doc.querySelector("[data-oc-ask]") as HTMLElement | null;
       return el && !el.hidden ? el : null;
@@ -505,6 +522,61 @@ describe("the session strip", () => {
     h = await harness();
     const hrefs = [...h.strip()!.querySelectorAll("[data-oc-chip]")].map((a) => a.getAttribute("href"));
     expect(hrefs).toContain("/L3RtcC9wcm9q/session/ses_b");
+  });
+});
+
+describe("not repeating upstream's own session tabs", () => {
+  // The v2 layout has its own session tab bar, so every session with a tab open
+  // was in two switchers at once, one directly above the other -- which reads
+  // as the same row rendered twice.
+
+  it("omits a session upstream is already showing as a tab", async () => {
+    h = await harness({ openTabs: ["ses_a"] });
+    await h.flush();
+
+    expect(h.chips()).toEqual(["Fix tunnel"]);
+  });
+
+  it("hides the strip entirely when every session has a tab", async () => {
+    // Nothing left to add, so it should not cost a row of screen either.
+    h = await harness({ openTabs: ["ses_a", "ses_b"] });
+    await h.flush();
+
+    expect(h.strip()?.hidden).toBe(true);
+  });
+
+  it("shows everything when upstream is showing no tabs", async () => {
+    h = await harness({ openTabs: [] });
+    await h.flush();
+
+    expect(h.chips()).toEqual(["Migrate auth", "Fix tunnel"]);
+  });
+
+  it("reads the id out of the tab's own href, not a guess at its state", async () => {
+    // A tab whose href names no session must not silently exclude everything.
+    h = await harness({ openTabs: [] });
+    const header = h.document.querySelector("header")!;
+    header.innerHTML = '<a data-titlebar-tab-link href="/settings">Settings</a>';
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.chips()).toEqual(["Migrate auth", "Fix tunnel"]);
+  });
+
+  it("follows the tabs as they change", async () => {
+    h = await harness({ openTabs: [] });
+    await h.flush();
+    expect(h.chips()).toHaveLength(2);
+
+    const header = h.document.querySelector("header")!;
+    const tab = h.document.createElement("a");
+    tab.setAttribute("data-titlebar-tab-link", "");
+    tab.setAttribute("href", "/L3RtcC9wcm9q/session/ses_b");
+    header.appendChild(tab);
+    await h.flush();
+
+    expect(h.chips()).toEqual(["Migrate auth"]);
   });
 });
 
@@ -1799,6 +1871,54 @@ describe("answering from the phone", () => {
     await h.flush();
 
     expect(h.askOptions()[0]).toBe(before);
+  });
+
+  it("waits for upstream's dock before standing in for it", async () => {
+    // The duplication: the pending fetch resolves before Solid has mounted the
+    // real dock, so a single check found nothing and both were on screen at
+    // once -- mine over the bottom of the page, upstream's underneath -- until
+    // the next DOM mutation took mine down.
+    h = await harness({ config: { askGraceMs: 2500 }, pendingQuestions: [QUESTION] });
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+  });
+
+  it("stands down for good once upstream's dock arrives during the wait", async () => {
+    h = await harness({ config: { askGraceMs: 300 }, pendingQuestions: [QUESTION] });
+    await h.flush();
+    const dock = h.document.createElement("div");
+    dock.setAttribute("data-component", "session-question-dock");
+    h.document.getElementById("root")!.appendChild(dock);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
+  });
+
+  it("renders anyway when upstream's dock never arrives", async () => {
+    // The wait has to be bounded by a timer, not by the next mutation: a
+    // request upstream never renders would otherwise sit invisible until
+    // something unrelated happened to redraw.
+    h = await harness({ config: { askGraceMs: 200 }, pendingQuestions: [QUESTION] });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await h.flush();
+
+    expect(h.ask()).not.toBeNull();
+    expect(h.askText()).toBe("Delete the account rows too?");
+  });
+
+  it("restarts the wait for a different request", async () => {
+    h = await harness({ config: { askGraceMs: 2500 }, pendingQuestions: [QUESTION] });
+    await h.flush();
+    h.setResponder((url) =>
+      url.startsWith("/question") ? [{ ...QUESTION, id: "que_next" }] : undefined,
+    );
+    h.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await h.flush();
+
+    expect(h.ask()).toBeNull();
   });
 
   it("unmounts at a desktop width", async () => {

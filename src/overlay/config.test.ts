@@ -20,6 +20,7 @@ describe("overlay config", () => {
         bubbles: true,
         changesButton: true,
         askDock: true,
+        askGraceMs: 2500,
         maxWidth: DEFAULT_MAX_WIDTH,
         debug: false,
       });

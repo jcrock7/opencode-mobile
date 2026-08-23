@@ -70,6 +70,16 @@ export interface OverlayConfig {
    * stack.
    */
   askDock: boolean;
+  /**
+   * How long to let upstream's own dock appear before standing in for it.
+   *
+   * Not an env var on purpose: it is a race window, not a preference. The
+   * pending fetch resolves before Solid has mounted the real dock, so a single
+   * check found nothing and both docks ended up on screen at once. Exposed on
+   * the config only so tests can collapse the wait -- the race itself gets its
+   * own tests at the real value.
+   */
+  askGraceMs: number;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
   /**

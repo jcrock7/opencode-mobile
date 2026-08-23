@@ -495,6 +495,22 @@ signals.forEach((signal) => {
     literal and the file stops parsing. `tsc` catches it as a stray
     "';' expected", which does not read like the real problem. Use single quotes
     in the injected script's prose.
+43. **Standing Down For Upstream Means Waiting, Not Checking Once**: the overlay
+    learns about a pending request from a fetch that resolves before Solid has
+    mounted the dock for it, so a single `querySelector` for upstream's dock
+    found nothing and both rendered. Hold for a grace window (`askGraceMs`,
+    2.5s) from the moment the request is first known, and bound the wait with a
+    timer rather than the next mutation -- a request upstream never renders must
+    not sit invisible until something unrelated redraws. Same shape for anything
+    else that fills a gap upstream might fill first.
+44. **Do Not Repeat A Control Upstream Already Shows**: the v2 layout has its own
+    titlebar session tabs, so the session strip listed every open session twice,
+    one row above the other. They are not the same *set* -- upstream shows open
+    tabs, the strip shows every recent session -- so the fix is to subtract, not
+    to delete: read the ids out of `[data-titlebar-tab-link]` hrefs, omit those,
+    and hide the strip when nothing is left. Related to #26, one level up: that
+    one is about a style upstream already applies, this one about a whole
+    control.
 
 ## Configuration
 

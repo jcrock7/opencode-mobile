@@ -22,6 +22,7 @@ const DEFAULT_CONFIG: OverlayConfig = {
   bubbles: true,
   changesButton: true,
   askDock: true,
+  askGraceMs: 2500,
   maxWidth: DEFAULT_MAX_WIDTH,
   debug: false,
 };
@@ -62,6 +63,8 @@ export function loadOverlayConfig(env: NodeJS.ProcessEnv = process.env): Overlay
     bubbles: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_BUBBLES),
     changesButton: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_CHANGES),
     askDock: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_ASK),
+    // Deliberately not env-configurable: see OverlayConfig.askGraceMs.
+    askGraceMs: DEFAULT_CONFIG.askGraceMs,
     maxWidth: maxWidth ?? DEFAULT_CONFIG.maxWidth,
     debug: isEnabled(env.OPENCODE_MOBILE_OVERLAY_DEBUG),
   };

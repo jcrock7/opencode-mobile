@@ -31,6 +31,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var KEYBOARD_ENABLED = ${config.keyboardViewport ? "true" : "false"};
   var CHANGES_ENABLED = ${config.changesButton ? "true" : "false"};
   var ASK_ENABLED = ${config.askDock ? "true" : "false"};
+  var ASK_GRACE_MS = ${config.askGraceMs};
   var DEBUG = ${config.debug ? "true" : "false"};
   if (typeof window === "undefined" || !window.document) return;
 
@@ -703,6 +704,32 @@ export function buildOverlayJs(config: OverlayConfig): string {
     return node;
   }
 
+  /**
+   * The sessions upstream is already showing as a titlebar tab.
+   *
+   * The v2 layout has its own session tab bar, so every session with a tab open
+   * was in two switchers at once, one directly above the other -- which reads
+   * as the same row rendered twice. Upstream's tabs are not the same SET as
+   * this strip (they are the open tabs; the strip is every recent session), so
+   * hiding the strip outright would cost the reach it adds. Showing only what
+   * upstream is not already showing costs nothing and removes the duplication
+   * -- and when every session has a tab, the strip has nothing to add and takes
+   * no room at all.
+   *
+   * Read from the tab's own link rather than any internal state: the href is
+   * the session route, which is the same thing routeParts() reads.
+   */
+  function openTabs() {
+    var out = Object.create(null);
+    var links = document.querySelectorAll("[data-titlebar-tab-link]");
+    for (var i = 0; i < links.length; i++) {
+      var href = links[i].getAttribute("href") || "";
+      var match = /\\/session\\/([^\\/?#]+)/.exec(href);
+      if (match) out[match[1]] = true;
+    }
+    return out;
+  }
+
   function render() {
     if (!STRIP_ENABLED || !strip) return;
 
@@ -715,7 +742,14 @@ export function buildOverlayJs(config: OverlayConfig): string {
     }
 
     var route = routeParts();
-    var items = ordered();
+    var shown = openTabs();
+    var items = ordered().filter(function (item) { return !shown[item.id]; });
+    if (!items.length) {
+      // Everything is already a tab: the strip has nothing to add.
+      strip.hidden = true;
+      strip.textContent = "";
+      return;
+    }
     var next = document.createDocumentFragment();
     for (var i = 0; i < items.length; i++) next.appendChild(buildChip(items[i], route));
 
@@ -1260,19 +1294,63 @@ export function buildOverlayJs(config: OverlayConfig): string {
     return html;
   }
 
+  function hideAsk() {
+    // Both conditions, not just the signature: a successful reply clears the
+    // signature before refetching, so keying the early return on the signature
+    // alone left the answered request on screen.
+    if (askEl.hidden && askSignature === "") return;
+    askSignature = "";
+    askEl.hidden = true;
+    askEl.innerHTML = "";
+    askEl.removeAttribute("data-oc-ask-kind");
+  }
+
+  /**
+   * Wait for upstream before standing in for it.
+   *
+   * This dock exists for the case where upstream's never arrives, and checking
+   * for it once is not enough: the pending fetch resolves before Solid has
+   * mounted the real dock, so both were on screen at once -- mine over the
+   * bottom of the page, upstream's underneath -- until the next DOM mutation
+   * took mine down. Two docks for one question, which is exactly what this was
+   * written to avoid.
+   *
+   * So give upstream a couple of seconds from the moment we first know about
+   * the request. The timer is what makes the wait safe: without it, a request
+   * upstream never renders would sit invisible until something else happened to
+   * redraw.
+   */
+  var askSeenId = "";
+  var askSeenAt = 0;
+  var askGrace = null;
+
+  function armAskGrace(waited) {
+    if (askGrace) return;
+    askGrace = window.setTimeout(function () {
+      askGrace = null;
+      if (active()) renderAsk();
+    }, Math.max(50, ASK_GRACE_MS - waited));
+  }
+
   function renderAsk() {
     if (!ASK_ENABLED || !askEl) return;
     var current = askFor();
 
     if (!current || upstreamDock()) {
-      // Both conditions, not just the signature: a successful reply clears the
-      // signature before refetching, so keying the early return on the
-      // signature alone left the answered request on screen.
-      if (askEl.hidden && askSignature === "") return;
-      askSignature = "";
-      askEl.hidden = true;
-      askEl.innerHTML = "";
-      askEl.removeAttribute("data-oc-ask-kind");
+      askSeenId = "";
+      askSeenAt = 0;
+      hideAsk();
+      return;
+    }
+
+    if (askSeenId !== current.item.id) {
+      askSeenId = current.item.id;
+      askSeenAt = Date.now();
+    }
+    var waited = Date.now() - askSeenAt;
+    if (waited < ASK_GRACE_MS) {
+      armAskGrace(waited);
+      hideAsk();
       return;
     }
 
@@ -1338,6 +1416,9 @@ export function buildOverlayJs(config: OverlayConfig): string {
   }
 
   function unmountAsk() {
+    if (askGrace) { window.clearTimeout(askGrace); askGrace = null; }
+    askSeenId = "";
+    askSeenAt = 0;
     askSignature = "";
     askId = "";
     askTab = 0;
@@ -1626,6 +1707,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (poll) { window.clearInterval(poll); poll = null; }
     if (refreshTimer) { window.clearTimeout(refreshTimer); refreshTimer = null; }
     if (retryTimer) { window.clearTimeout(retryTimer); retryTimer = null; }
+    if (askGrace) { window.clearTimeout(askGrace); askGrace = null; }
     unmount();
     unmountStatus();
     unmountChanges();

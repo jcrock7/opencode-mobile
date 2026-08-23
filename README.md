@@ -9,6 +9,10 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
+- Fixed two things that rendered twice on a phone: the overlay's ask dock
+  appeared alongside upstream's own (it checked for it once, before Solid had
+  mounted it), and the session strip repeated every session upstream was already
+  showing as a titlebar tab.
 - Fixed: upstream's question and permission docks grew past the screen on a
   phone, putting Submit below the fold with nothing to scroll. Their own cap
   falls back to `100dvh` when it cannot find the transcript's sticky header,
@@ -32,7 +36,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 803 tests with an enforced 85% coverage threshold
+- Test suite grown to 813 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -304,7 +308,13 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   you without scrolling to hunt for the live tool row.
 - Adds a **session switcher**: a horizontally scrolling strip of chips above the
   timeline, one per session, coloured by state and sorted so anything needing you
-  comes first
+  comes first. It omits any session upstream is already showing as a titlebar
+  tab, and disappears entirely when they all are -- otherwise the phone carried
+  two session switchers stacked on top of each other, which reads as one row
+  rendered twice. The two are not the same set (upstream's are the *open tabs*;
+  the strip is every recent session), so showing only what upstream is not
+  already showing keeps the reach the strip adds without the duplication.
+  `OPENCODE_MOBILE_OVERLAY_STRIP=0` removes it altogether
 - **Handles PWA safe areas.** Installed to the Home Screen the page runs with no
   browser chrome, and OpenCode asks for a translucent status bar with
   `viewport-fit=cover` -- so the document extends *under* the notch and the home
@@ -598,6 +608,15 @@ Two things it deliberately does not do. It renders **nothing** when upstream's
 own dock is on the page -- two docks for one request is worse than none, which
 is the lesson from the double bubble. And it does not take a typed answer; the
 options work, and it says so rather than leaving you hunting for a field.
+
+Standing down means *waiting*, not just checking. The pending fetch resolves
+before Solid has mounted the real dock, so a single check found nothing and both
+docks ended up on screen at once -- ours over the bottom of the page, upstream's
+underneath -- until the next DOM mutation took ours down. So ours holds for two
+and a half seconds from the moment it first knows about a request, and appears
+only if upstream's has not arrived by then. The wait is bounded by a timer
+rather than by the next mutation, because a request upstream never renders would
+otherwise sit invisible until something unrelated happened to redraw.
 
 `OPENCODE_MOBILE_OVERLAY_ASK=0` switches the dock off and leaves the status bar
 signal in place.
