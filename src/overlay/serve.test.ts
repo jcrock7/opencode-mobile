@@ -78,6 +78,39 @@ describe("overlay assets", () => {
   });
 
   describe("the stylesheet", () => {
+    it("caps the blocking dock so its buttons stay on screen", () => {
+      // Upstream caps the dock with var(--question-prompt-max-height, 100dvh)
+      // and its own measure() REMOVES that variable when it cannot find the
+      // transcript's sticky header -- which on a phone it cannot. The cap falls
+      // back to 100dvh, the dock grows past the screen, and Submit goes below
+      // the fold with nothing to scroll.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-component="dock-prompt"][data-kind="question"]');
+      expect(css).toContain('[data-component="dock-prompt"][data-kind="permission"]');
+      expect(css).toMatch(/max-height: \d+dvh !important/);
+    });
+
+    it("caps the property, never the custom property upstream reads", () => {
+      // A bad value inside a custom property still substitutes, and invalidates
+      // max-height at computed-value time -- leaving it 'none', which is worse
+      // than not trying. An unsupported unit on the property itself is dropped
+      // at parse time and upstream's own behaviour survives.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).not.toContain("--question-prompt-max-height:");
+    });
+
+    it("keeps the tray from being the thing that shrinks", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-component="dock-prompt"] [data-dock-surface="tray"]');
+      expect(css).toContain("flex: none !important");
+    });
+
+    it("contains the dock's scroll gesture rather than handing it to the page", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-slot="question-options"]');
+      expect(css).toContain("overscroll-behavior: contain !important");
+    });
+
     it("scopes the mobile rules to the configured breakpoint", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       expect(css).toContain("@media (max-width: 767px)");

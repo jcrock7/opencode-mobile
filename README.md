@@ -9,6 +9,10 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
+- Fixed: upstream's question and permission docks grew past the screen on a
+  phone, putting Submit below the fold with nothing to scroll. Their own cap
+  falls back to `100dvh` when it cannot find the transcript's sticky header,
+  which on a phone it never does.
 - **`OPENCODE_MOBILE_NOTIFY_ALWAYS=1`** lets a process that is not serving send
   notifications. Without it, a question asked by an agent in any other process
   reached nobody -- the event hook is in-process, and the plugin returned a
@@ -28,7 +32,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 799 tests with an enforced 85% coverage threshold
+- Test suite grown to 803 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -880,13 +884,73 @@ are all covered by the same credential.
   tunnel binary with your system package manager -- the plugin looks for it on
   your PATH and in the usual locations, and does not ship one.
 
+### The whole setup, as environment variables
+
+Nothing below is required -- every default is the one you want for a phone. This
+is the complete picture, in the order it matters, so you can see what you are
+and are not setting.
+
+**On the machine that serves the tunnel** (where you run `npm run serve`):
+
+```bash
+# Required if the tunnel is reachable from the internet. It is OpenCode's own
+# password AND what guards this plugin's own routes -- /push-token and /tunnel,
+# which OpenCode never sees, so its password alone did not cover them.
+export OPENCODE_SERVER_PASSWORD='<a long random string>'
+export OPENCODE_SERVER_USERNAME='opencode'        # the default; set it to change it
+
+# Which tunnel to use. cloudflare is tried first without this.
+export TUNNEL_PROVIDER=cloudflare
+
+# Only if OpenCode is not on 4096. `npm run serve` reads the real port out of
+# OpenCode's own startup line, so this is a fallback and a hint for the doctor.
+export OPENCODE_PORT=4096
+```
+
+**Wherever the agent actually runs** -- which may be a different process, and a
+different machine, from the one above (a desktop app driving its own sidecar,
+say). This is the one that is off by default and that you probably want on:
+
+```bash
+# Notify from a process that is not the one serving. Without it, a question
+# asked by an agent in any other process reaches nobody.
+export OPENCODE_MOBILE_NOTIFY_ALWAYS=1
+```
+
+**Optional, and only to turn things off.** Every overlay feature is on by
+default; each of these is `0` to disable:
+
+```bash
+export OPENCODE_MOBILE_OVERLAY=0            # the whole overlay: a plain proxy
+export OPENCODE_MOBILE_OVERLAY_STRIP=0      # the session switcher strip
+export OPENCODE_MOBILE_OVERLAY_STATUS=0     # the "now running" bar
+export OPENCODE_MOBILE_OVERLAY_ASK=0        # answering from the phone
+export OPENCODE_MOBILE_OVERLAY_CHANGES=0    # the GitHub button; restores the tabs
+export OPENCODE_MOBILE_OVERLAY_BUBBLES=0    # the transcript's three tiers
+export OPENCODE_MOBILE_OVERLAY_KEYBOARD=0   # the keyboard viewport fix
+export OPENCODE_MOBILE_PROGRESS=0           # "still working" notifications
+```
+
+**Tuning:**
+
+```bash
+export OPENCODE_MOBILE_OVERLAY_MAX_WIDTH=767   # widths at or below get mobile rules
+export OPENCODE_MOBILE_PROGRESS_AFTER=60       # seconds busy before notifying (5-3600)
+```
+
+**Diagnostics.** Both are noisy; turn them on to answer a question, then off:
+
+```bash
+export OPENCODE_MOBILE_OVERLAY_DEBUG=1   # the purple readout at the foot of the page
+export OPENCODE_MOBILE_DEBUG=1           # plugin logging on the server
+```
+
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TUNNEL_PROVIDER` | Tunnel provider (`auto`, `ngrok`, `cloudflare`, `localtunnel`) | `auto` |
 | `OPENCODE_MOBILE_DEBUG` | Enable debug logging (`1` to enable) | disabled |
-| `OPENCODE_PORT` | Local server port | `3000` |
+| `OPENCODE_PORT` | The port OpenCode is on, for `npm run serve` and `scripts/doctor.mjs`. The plugin itself reads the real port from `ctx.serverUrl`; the plugin's own port is this + 1 | `4096` |
 | `OPENCODE_MOBILE_NOTIFY_ALWAYS` | Notify from a process that is not the one serving -- set it where the agent runs. No server, no tunnel, no overlay | off |
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
@@ -899,7 +963,9 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY_DEBUG` | `1` shows a badge on the page proving the overlay is applied | off |
 | `OPENCODE_MOBILE_PROGRESS` | Progress notification for work that outlives the delay below. `0` disables it | enabled |
 | `OPENCODE_MOBILE_PROGRESS_AFTER` | Seconds a session must stay busy before it is worth notifying about. Accepts 5-3600; anything else is treated as a typo and ignored | `60` |
-| `OPENCODE_SERVER_PASSWORD` | **OpenCode's own** HTTP Basic password. Not read by this plugin, but see [Securing the tunnel](#securing-the-tunnel) | unset |
+| `TUNNEL_PROVIDER` | `cloudflare`, `ngrok` or `localtunnel`. Anything else falls through the default order | `cloudflare` first |
+| `OPENCODE_SERVER_PASSWORD` | OpenCode's own HTTP Basic password. **Also read by this plugin** to guard its own routes (`/push-token`, `/tunnel`), which OpenCode never sees -- see [Security fix](#security-fix-the-plugins-own-endpoints) | unset |
+| `OPENCODE_SERVER_USERNAME` | Username to pair with that password | `opencode` |
 
 ### Tunnel Providers
 

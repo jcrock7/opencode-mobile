@@ -575,6 +575,53 @@ export function buildOverlayCss(config: OverlayConfig): string {
     -webkit-user-select: text !important;
     user-select: text !important;
   }
+
+  /* 10. Keep the blocking dock's buttons on screen.
+
+         Upstream's question and permission docks put Dismiss/Submit (or
+         Reject/Always/Allow) in a tray at the bottom of the dock, and cap the
+         dock with 'max-height: var(--question-prompt-max-height, 100dvh)'. The
+         dock's own measure() computes that variable from the transcript's
+         sticky header -- and returns early, REMOVING the variable, when it
+         cannot find one:
+
+             const head = scroller.firstElementChild
+             const top = head.classList.contains("sticky") ? ... : 0
+             if (!top) { root.style.removeProperty(...); return }
+
+         On a phone it finds none, so the cap falls back to 100dvh. The dock
+         then grows past the screen underneath the header, the tab row, the
+         session strip and the status bar, and the tray goes below the fold --
+         with nothing to scroll, because the shell is height-constrained and
+         only the options list scrolls, and it was given room to grow instead.
+
+         So cap the dock directly. max-height only ever caps, so a short
+         question still sizes to its content; a long one gives its options list
+         the bounded height it needed all along, and that list already scrolls.
+         Set on the property rather than through the custom property on
+         purpose: a bad value in a variable substitutes and invalidates
+         max-height at computed-value time (leaving it 'none', which is worse
+         than doing nothing), while an unsupported unit here is dropped at parse
+         time and upstream's own behaviour survives. */
+  [data-component="dock-prompt"][data-kind="question"],
+  [data-component="dock-prompt"][data-kind="permission"] {
+    max-height: 58dvh !important;
+  }
+
+  /* The tray is what has to stay visible, so it may not be the thing that
+     shrinks when the dock is capped. */
+  [data-component="dock-prompt"] [data-dock-surface="tray"] {
+    flex: none !important;
+  }
+
+  /* And the list that does the scrolling needs to do it under a finger, and to
+     stop rather than hand the gesture to the page behind it. */
+  [data-slot="question-options"],
+  [data-slot="permission-content"],
+  [data-slot="question-content"] {
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior: contain !important;
+  }
 }
 
 /* ---- now-running status bar ------------------------------------------------
@@ -744,7 +791,7 @@ export function buildOverlayCss(config: OverlayConfig): string {
   z-index: 90;
   display: flex;
   flex-direction: column;
-  max-height: 78vh;
+  max-height: 78dvh;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   gap: 8px;
   border-top: 1px solid var(--border-base, rgba(127, 127, 127, 0.32));
