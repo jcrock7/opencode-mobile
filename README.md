@@ -28,7 +28,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 795 tests with an enforced 85% coverage threshold
+- Test suite grown to 799 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -539,7 +539,28 @@ question, and offering them would be a lie -- tapping opens the session.
 
 **Permission requests were listening for the wrong name.** See below.
 
-The overlay's status bar now distinguishes the two, so the phone shows the state
+**Three signals, because one is not enough.** The bar turning amber used to
+depend on either catching the live `question.asked` event or a pending fetch
+landing afterwards. An event reaches only a client that was connected when it
+fired, and the fetch is on a 20-second poll -- so a single missed event left the
+bar cold for up to twenty seconds while the agent sat waiting, which is exactly
+the interval you want to know about.
+
+The question *tool* closes that. `question.ask` blocks inside the tool's
+`execute`, so its part stays `running` for as long as the question is pending,
+and `message.part.updated` repeats while it does. A running part named
+`question` is proof of a pending question that costs no network at all, and
+because it keeps arriving, one dropped event cannot cost the state. It is
+symmetric on the way out: the tool returns the moment the answer lands, so a
+finished part retires the mark whether or not the reply event arrived. The fetch
+stays authoritative -- the tool part only ever marks, and is what makes the mark
+instant.
+
+Permissions have no equivalent, because a permission request comes from
+whichever tool needed one; there is no name to match. They still have the event
+and the fetch.
+
+The overlay's status bar distinguishes the two, so the phone shows the state
 even when the on-screen dock does not appear:
 
 | State | Status bar |

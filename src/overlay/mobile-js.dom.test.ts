@@ -1341,6 +1341,54 @@ describe("a request that was already pending", () => {
     expect(h.statusState()).toBe("attention");
   });
 
+  it("goes amber on a running question tool, without waiting for a fetch", async () => {
+    // The gap behind "it didn't turn amber until I made a selection". The live
+    // event reaches only a client that was connected when it fired, and the
+    // pending fetch is on a 20s poll -- so one missed event left the bar cold
+    // for up to twenty seconds while the agent sat waiting. The question tool's
+    // part stays running for exactly as long as the question is pending, and
+    // those updates repeat, so this cannot be missed the same way.
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart({ tool: "question", state: { status: "running", title: "Asked 1 question" } }));
+
+    expect(h.statusState()).toBe("attention");
+    expect(h.statusText()).toBe("Waiting for your answer");
+  });
+
+  it("retires the mark when the question tool finishes", async () => {
+    // Symmetric, for the same reason: the reply event can be missed too, and
+    // the tool returns as soon as the answer lands.
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart({ tool: "question", state: { status: "running", title: "Asked 1 question" } }));
+    expect(h.statusState()).toBe("attention");
+
+    h.emit(toolPart({ tool: "question", state: { status: "completed", title: "Asked 1 question" } }));
+    expect(h.statusState()).not.toBe("attention");
+  });
+
+  it("does not read a pending question into any other tool", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart({ tool: "bash", state: { status: "running", title: "npm test" } }));
+
+    expect(h.statusState()).toBe("busy");
+  });
+
+  it("fetches the request body once, not on every part update", async () => {
+    // Those updates repeat for as long as the session is blocked. Marking is
+    // free; refetching on each one is not.
+    h = await harness({ pendingQuestions: [{ id: "que_1", sessionID: "ses_a" }] });
+    await h.flush();
+    const before = h.fetched.filter((entry) => entry.url.startsWith("/question")).length;
+
+    for (let i = 0; i < 5; i++) {
+      h.emit(toolPart({ tool: "question", state: { status: "running", title: "Asked 1 question" } }));
+    }
+    await h.flush();
+
+    const after = h.fetched.filter((entry) => entry.url.startsWith("/question")).length;
+    expect(after - before).toBe(1);
+  });
+
   it("marks the right chip when the request belongs to another session", async () => {
     h = await harness({ pendingQuestions: [{ id: "que_1", sessionID: "ses_b" }] });
     await h.flush();

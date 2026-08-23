@@ -481,6 +481,20 @@ signals.forEach((signal) => {
     the *server and tunnel* on serving; gate notifying on
     `OPENCODE_MOBILE_NOTIFY_ALWAYS` instead (see `src/push/role.ts`). Off by
     default: notifying from a TUI you are sitting at is noise.
+41. **A Blocking Tool's Own Part Is A Signal Worth Reading**: the `question`
+    tool blocks inside its `execute` while `question.ask` waits, so its
+    `message.part.updated` part stays `running` for exactly as long as the
+    question is pending -- and those updates repeat. That makes it a third,
+    network-free source for "blocked on a human", alongside the live event
+    (which only reaches a client connected when it fired) and the fetch (a
+    20-second poll). Mark from it and retire on completion, symmetrically;
+    debounce anything that refetches, because the part updates constantly. The
+    fetch stays authoritative -- the part marks, it does not decide.
+42. **`mobile-js.ts` Has No Backticks Or `${` Either**: same cause as #35 -- the
+    script is a template literal, so a backtick in a *comment* opens a nested
+    literal and the file stops parsing. `tsc` catches it as a stray
+    "';' expected", which does not read like the real problem. Use single quotes
+    in the injected script's prose.
 
 ## Configuration
 

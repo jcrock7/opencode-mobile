@@ -565,6 +565,38 @@ export function buildOverlayJs(config: OverlayConfig): string {
     });
   }
 
+  /**
+   * A third, independent signal that a session is blocked on a question.
+   *
+   * The two we had are the live 'question.asked' event and the pending fetch.
+   * The event only reaches a client connected when it fired, and the fetch runs
+   * on a 20-second poll -- so one missed event left the bar cold for up to
+   * twenty seconds while the agent sat waiting, which is exactly the interval
+   * in which you want to know.
+   *
+   * The question TOOL closes that gap. 'question.ask' blocks inside the tool's
+   * execute, so its part stays 'running' for the whole time the session is
+   * waiting, and 'message.part.updated' repeats while it does. A running part
+   * named "question" is therefore proof of a pending question that needs no
+   * network at all, and it keeps arriving -- so a single dropped event cannot
+   * cost us the state. Permissions have no equivalent: they come from whichever
+   * tool needed one, so there is no name to match.
+   *
+   * The fetch stays authoritative. This only ever marks; refreshPending is what
+   * confirms or retires it, and is what supplies the request body the dock
+   * needs.
+   */
+  var QUESTION_TOOL = "question";
+  var probedAt = 0;
+
+  function probePending() {
+    var now = Date.now();
+    // The part updates constantly while blocked; the fetch does not need to.
+    if (now - probedAt < 3000) return;
+    probedAt = now;
+    refreshPending();
+  }
+
   function normalizeStatus(raw) {
     var next = Object.create(null);
     if (!raw || typeof raw !== "object") return next;
@@ -1371,7 +1403,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
       if (!part || part.type !== "tool") return;
       var state = part.state || {};
       if (!id) return;
-      if (state.status === "running" || state.status === "pending") {
+      var running = state.status === "running" || state.status === "pending";
+      if (running) {
         runningBySession[id] = {
           sessionID: id,
           tool: String(part.tool || ""),
@@ -1384,6 +1417,15 @@ export function buildOverlayJs(config: OverlayConfig): string {
         // stale label and a counter that keeps climbing. Scoped to the session
         // that reported it, so a sub-agent finishing cannot clear its parent's.
         if (held && part.tool === held.tool) delete runningBySession[id];
+      }
+
+      // A running "question" tool IS a pending question -- see probePending.
+      // Symmetric on the way out: the tool returns as soon as the answer lands,
+      // so a finished one retires the mark whether or not we saw the reply.
+      if (part.tool === QUESTION_TOOL) {
+        if (running) attention[id] = "question";
+        else if (attention[id] === "question") delete attention[id];
+        probePending();
       }
       // A sub-agent's tool shows on its parent's bar, so a child's event has
       // to redraw even though the child is not the session on screen.
