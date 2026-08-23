@@ -9,6 +9,11 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
 - **Mobile web overlay.** The tunnel now points at the plugin, which reverse-proxies
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
+- **`OPENCODE_MOBILE_NOTIFY_ALWAYS=1`** lets a process that is not serving send
+  notifications. Without it, a question asked by an agent in any other process
+  reached nobody -- the event hook is in-process, and the plugin returned a
+  no-op handler outside `serve` and again on losing the plugin port. See
+  [Being notified of a question the phone cannot see](#being-notified-of-a-question-the-phone-cannot-see).
 - **Answer questions and permission requests from the phone.** The overlay
   renders the pending request as a bottom sheet and POSTs the reply itself,
   rather than waiting for upstream's dock to appear. See
@@ -23,7 +28,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 769 tests with an enforced 85% coverage threshold
+- Test suite grown to 795 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -572,6 +577,42 @@ options work, and it says so rather than leaving you hunting for a field.
 `OPENCODE_MOBILE_OVERLAY_ASK=0` switches the dock off and leaves the status bar
 signal in place.
 
+### Being notified of a question the phone cannot see
+
+The in-memory finding above limits what the *phone* can reach over HTTP. It does
+not limit notifications, because the notification path is not HTTP at all: this
+plugin's `event` hook is called on the bus of the process that loaded it, and
+sending a push needs only the token file on disk and an outbound call to Expo.
+The deep-link URL is read back from the tunnel metadata the serving process
+wrote, so a process with no tunnel of its own still links somewhere useful.
+
+So a question asked in a process that is not the one serving *can* notify you --
+it just did not, because the plugin returned a no-op event handler in two
+places: any process not started with `serve`, and a serving process that lost
+the plugin port to one already running. Both are now about serving only:
+
+```bash
+# In the environment where the agent actually runs -- the desktop app, a TUI,
+# a sidecar -- not necessarily where the tunnel is.
+OPENCODE_MOBILE_NOTIFY_ALWAYS=1
+```
+
+That process then notifies without starting a server, a tunnel or the overlay.
+It is opt-in because "notify from everywhere" is a different product: sitting at
+a TUI, a push for every turn you just watched finish is noise. The startup line
+says which of the three roles a process took, so it is never a guess:
+
+```
+[opencode-mobile] serving: plugin port, tunnel, overlay and notifications
+[opencode-mobile] notifications only (OPENCODE_MOBILE_NOTIFY_ALWAYS): no server, no tunnel
+[opencode-mobile] idle: not serving, and OPENCODE_MOBILE_NOTIFY_ALWAYS is not set
+```
+
+One honest limit: a notification from a process the phone cannot reach tells you
+a question is waiting and takes you to the session, but the dock still cannot
+show it -- the request is in that process's memory. To *answer* from the phone,
+the phone has to be proxied to the process running the agent.
+
 ### If the dock is empty but something is clearly waiting
 
 A pending question lives in an **in-memory map inside the process that asked
@@ -825,6 +866,7 @@ are all covered by the same credential.
 | `TUNNEL_PROVIDER` | Tunnel provider (`auto`, `ngrok`, `cloudflare`, `localtunnel`) | `auto` |
 | `OPENCODE_MOBILE_DEBUG` | Enable debug logging (`1` to enable) | disabled |
 | `OPENCODE_PORT` | Local server port | `3000` |
+| `OPENCODE_MOBILE_NOTIFY_ALWAYS` | Notify from a process that is not the one serving -- set it where the agent runs. No server, no tunnel, no overlay | off |
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STATUS` | "Now running" status bar. `0` disables it | enabled |

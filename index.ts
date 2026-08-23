@@ -82,6 +82,12 @@ import {
   UNAUTHORIZED_HEADERS,
   type PluginRouteKind,
 } from "./src/proxy/auth";
+import {
+  resolvePluginRole,
+  roleWithoutPort,
+  describeRole,
+  type PluginRole,
+} from "./src/push/role";
 
 function logPluginVersion(ctx: Parameters<Plugin>[0]): void {
   const client = (ctx as any)?.client;
@@ -888,29 +894,37 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
   // - Bun preserves the OpenCode subcommand tokens in `process.argv` (serve/debug/wait/etc),
   //   so we gate on the presence of the literal `serve` token.
   const hasServerUrl = !!(ctx as any)?.serverUrl;
-  const isAttachMode = process.argv.includes("attach");
-  const isServeMode = process.argv.includes("serve") && !isAttachMode;
+  // Which of the three jobs this process has -- see src/push/role.ts. Notifying
+  // is separable from serving, because the event hook is called on the bus of
+  // whichever process loaded the plugin: an agent running outside the serving
+  // process is silent by choice, not by necessity.
+  let role: PluginRole = resolvePluginRole({ argv: process.argv, env: process.env });
 
   debugLog("[PushPlugin] hasServerUrl:", hasServerUrl);
-  debugLog("[PushPlugin] isAttachMode:", isAttachMode);
-  debugLog("[PushPlugin] isServeMode:", isServeMode);
+  debugLog("[PushPlugin] role:", role);
   debugLog("[PushPlugin] process.argv:", process.argv.join(", "));
+  console.log(`[opencode-mobile] ${describeRole(role)}`);
 
-  if (!isServeMode) {
+  if (role === "idle") {
     console.log(
       "[opencode-mobile] Plugin init OK; skipping (not in 'serve' mode). " +
-        "Run: opencode serve ...",
+        "Run: opencode serve ... -- or set OPENCODE_MOBILE_NOTIFY_ALWAYS=1 to be " +
+        "notified from this process without serving from it.",
     );
     return {
       tool: {
         mobile: mobileTool,
       },
       event: async () => {
-        // No-op unless running in `opencode serve` mode.
+        // No-op: not serving, and notify-always was not asked for.
       },
     };
   }
 
+  // Serving is everything below: the plugin port, the tunnel, the QR code and
+  // the overlay. A notify-only process skips all of it and goes straight to the
+  // event handler, which is the part that does not need a server.
+  if (role === "serve") {
   const openCodePort = Number((ctx as any).serverUrl?.port) || 4096;
   const pluginPort = openCodePort + 1;  // Plugin on next port
 
@@ -931,15 +945,22 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
 
   // Only start tunnel if server started successfully (port wasn't in use)
   if (!serverStarted) {
-    debugLog("[PushPlugin] Server already running, skipping plugin initialization");
-    return {
-      tool: {
-        mobile: mobileTool,
-      },
-      event: async () => {
-        // No-op when another instance is running
-      },
-    };
+    debugLog("[PushPlugin] Server already running; another process is serving");
+    // Two servers on one port is not a state to recover from -- but it is also
+    // not a reason to stop watching the bus of the process the agent may be
+    // running in, which is what this process still is.
+    role = roleWithoutPort(process.env);
+    console.log(`[opencode-mobile] another process is serving; ${describeRole(role)}`);
+    if (role === "idle") {
+      return {
+        tool: {
+          mobile: mobileTool,
+        },
+        event: async () => {
+          // No-op when another instance is serving.
+        },
+      };
+    }
   }
 
   // Auto-start tunnel pointing at the PLUGIN, which forwards everything to
@@ -967,6 +988,7 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
   } catch (tunnelError: any) {
     console.error("[DEV] Failed to start tunnel:", tunnelError.message);
   }
+  } // end of the serving-only setup
 
   // Progress notifications. The tracker holds one timer per busy session and
   // cancels it the moment the session settles, so only work that outlives the

@@ -471,6 +471,16 @@ signals.forEach((signal) => {
     as #26 (the double bubble) but for a whole feature rather than a style: the
     overlay's job is to fill a gap, and two docks for one request is worse than
     none.
+40. **The Event Hook Is In-Process; Serving Is Not A Prerequisite For It**: a
+    plugin's `event` handler is called on the bus of whichever OpenCode process
+    loaded it, and sending a push needs only the token file and an outbound call
+    to Expo -- no plugin server, no tunnel (the deep link comes from the tunnel
+    metadata on disk). The plugin used to return a no-op handler in any process
+    without `serve` in argv, and again in a serving process that lost the plugin
+    port, which silenced every agent running outside the serving process. Gate
+    the *server and tunnel* on serving; gate notifying on
+    `OPENCODE_MOBILE_NOTIFY_ALWAYS` instead (see `src/push/role.ts`). Off by
+    default: notifying from a TUI you are sitting at is noise.
 
 ## Configuration
 
