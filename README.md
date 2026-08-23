@@ -605,6 +605,14 @@ tunnel    https://dev.crockers.org
           timings withheld: nothing here measured a working request
 ```
 
+Each leg reuses one keep-alive connection, because a real client does. Without
+that, every probe pays a fresh TCP handshake and the plugin leg pays two -- client
+to plugin, plugin to OpenCode -- which read as the plugin "adding 9ms" when the
+loopback measurement of the same code says 0ms. The stream probe is sampled three
+times and reported as a median for the same reason: one sample of it once made
+the plugin look *faster* than the OpenCode it proxies, which is noise presented
+as a result.
+
 **A failing leg tells you more than a slow one**, so the status code is reported
 first and the timings are withheld unless the request actually succeeded. That
 is not a nicety: the first version of this script printed `first /event 65ms

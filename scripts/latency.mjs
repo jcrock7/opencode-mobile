@@ -192,9 +192,26 @@ const STATUS_MEANING = {
     "never started it (`opencode serve` loads no plugins until a request arrives -- use `npm run serve`)",
 };
 
+/**
+ * One keep-alive agent per leg.
+ *
+ * Without this every probe pays a fresh TCP (and TLS) handshake, and the
+ * plugin leg pays two -- client to plugin, plugin to OpenCode -- which showed
+ * up as the plugin "adding 9ms" when the loopback measurement of the same code
+ * says 0ms. A real client holds its connection open, so measuring per-request
+ * handshakes measures something nobody experiences. The first request still
+ * pays it; the rest are what a warm client sees.
+ */
+const agents = new Map();
+
 function probeClient(base) {
   const target = new URL(base);
-  return { target, client: target.protocol === "https:" ? https : http };
+  const client = target.protocol === "https:" ? https : http;
+  if (!agents.has(base)) {
+    const Agent = target.protocol === "https:" ? https.Agent : http.Agent;
+    agents.set(base, new Agent({ keepAlive: true, maxSockets: 4 }));
+  }
+  return { target, client, agent: agents.get(base) };
 }
 
 function authHeaders(password) {
@@ -204,7 +221,7 @@ function authHeaders(password) {
 }
 
 function getOnce(base, pathname, password) {
-  const { target, client } = probeClient(base);
+  const { target, client, agent } = probeClient(base);
   return new Promise((resolve) => {
     const started = Date.now();
     const request = client.request(
@@ -213,6 +230,7 @@ function getOnce(base, pathname, password) {
         port: target.port || undefined,
         path: pathname,
         method: "GET",
+        agent,
         headers: { accept: "application/json", ...authHeaders(password) },
       },
       (res) => {
@@ -226,7 +244,14 @@ function getOnce(base, pathname, password) {
   });
 }
 
-/** Time to the first byte on the event stream -- the number a question waits on. */
+/**
+ * Time to the first byte on the event stream -- the number a question waits on.
+ *
+ * Deliberately NOT on the pooled agent: this request holds its socket open for
+ * as long as the stream lives, so lending it a pooled one would starve the
+ * GETs. And sampled more than once, because a single measurement of this was
+ * how the plugin came out "faster than OpenCode" -- noise, read as a result.
+ */
 function firstEvent(base, password) {
   const { target, client } = probeClient(base);
   return new Promise((resolve) => {
@@ -263,7 +288,7 @@ async function probeLeg(label, base, password) {
   const gets = [];
   let status = null;
   let failure = null;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
     const result = await getOnce(base, "/session", password);
     if (result.error) {
       failure = result.error;
@@ -272,8 +297,20 @@ async function probeLeg(label, base, password) {
     status = result.status;
     gets.push(result.ms);
   }
-  const stream = failure ? null : await firstEvent(base, password);
-  return { label, base, gets, status, failure, stream };
+  if (failure) return { label, base, gets, status, failure, stream: null, streams: [] };
+  const streams = [];
+  for (let i = 0; i < 3; i++) streams.push(await firstEvent(base, password));
+  const timed = streams.filter((s) => !s.error && s.ms !== null).map((s) => s.ms);
+  const stream = streams.find((s) => s.error) ?? streams[streams.length - 1];
+  return {
+    label,
+    base,
+    gets,
+    status,
+    failure,
+    stream: stream && timed.length ? { ...stream, ms: percentile(timed, 50), samples: timed } : stream,
+    streams,
+  };
 }
 
 function printLeg(leg) {
@@ -301,9 +338,12 @@ function printLeg(leg) {
     console.log(`          /event        HTTP ${s.status} -- ${STATUS_MEANING[s.status] ?? "not a success"}`);
     return false;
   }
-  console.log(
-    `          /event        ${s.ms === null ? "connected, but no event arrived before the stream closed" : `first byte in ${s.ms}ms`}`,
-  );
+  if (s.ms === null) {
+    console.log("          /event        connected, but no event arrived before the stream closed");
+    return true;
+  }
+  const samples = s.samples ? ` (of ${s.samples.map((v) => `${v}ms`).join(", ")})` : "";
+  console.log(`          /event        first byte, median ${s.ms}ms${samples}`);
   return true;
 }
 
