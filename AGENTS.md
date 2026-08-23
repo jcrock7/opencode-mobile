@@ -344,19 +344,24 @@ signals.forEach((signal) => {
 18. **A Caller Never Chooses A Port, Path Or Host To Open**: `POST /tunnel`
     accepted `body.port` and published it. Constrain to values this process
     already owns, and enforce it independently of authentication.
-19. **Per-Session State, Not Globals**: Anything derived from the event stream
+19. **Auth Checks Are Made Anonymously Or They Prove Nothing**: `scripts/doctor.mjs`
+    probes the public URL *without* credentials in its edge-authentication
+    section. Sending the password would answer "can I get in", when the question
+    is "what does someone holding only the URL get". Earlier doctor sections
+    made the opposite mistake and read a 401 as a failure.
+20. **Per-Session State, Not Globals**: Anything derived from the event stream
     is keyed by session id. A single global "what is running" let a tool
     starting in any session relabel the status bar for the one on screen, and
     let a sub-agent finishing clear its parent's label.
-20. **Child Sessions Are Attributed, Never Named Alone**: A sub-agent's session
+21. **Child Sessions Are Attributed, Never Named Alone**: A sub-agent's session
     id means nothing to the user. Surface its work against the parent they
     started, labelled as delegated. Children still get no chip of their own and
     no notification of their own -- `formatNotification` suppresses them
     globally, and any new notification kind inherits that.
-21. **A Progress Notification Is Not A Start Notification**: Arm on busy, cancel
+22. **A Progress Notification Is Not A Start Notification**: Arm on busy, cancel
     on settle, fire once. A push for every turn that begins is noise, because
     most turns end before you could read it.
-22. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+23. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

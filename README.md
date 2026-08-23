@@ -499,6 +499,67 @@ With no password configured the endpoints stay open -- requiring credentials
 nobody was told to set would lock out every existing install -- but startup now
 warns, in those words, that they are reachable.
 
+## Edge authentication (Cloudflare Access)
+
+`OPENCODE_SERVER_PASSWORD` is a real control, but it is the *only* one: every
+unauthenticated request still reaches your machine and gets to attempt auth, and
+nothing in the stack rate-limits or locks out repeated guesses. The bigger win is
+not a stronger credential -- it is moving the gate off your machine, so
+unauthenticated traffic is rejected at Cloudflare's edge and never arrives.
+
+This requires a **named** tunnel on a domain in your Cloudflare account. A free
+`trycloudflare.com` URL cannot be protected this way.
+
+**What to set up** (in Cloudflare Zero Trust, `one.dash.cloudflare.com`):
+
+1. Add a **self-hosted application** whose public hostname is the one your named
+   tunnel already serves.
+2. Attach an **Allow policy** scoped to your own identity -- an `Emails` selector
+   with just your address, not `Everyone`.
+3. Choose a **login method**. One-time PIN by email needs no other setup. For
+   passkeys, add an identity provider that enforces them (Google, GitHub and
+   Microsoft Entra all support passkeys) and let Access federate to it -- Access
+   does not implement WebAuthn itself, so passkeys come from the IdP.
+4. Set the **session duration** long (see the PWA note below).
+5. If anything non-browser needs in -- the mobile app registering a push token --
+   create a **service token** and a policy that accepts it. Service tokens
+   authenticate with `CF-Access-Client-Id` and `CF-Access-Client-Secret`
+   headers instead of a login redirect.
+
+I have written these as the shape of the configuration rather than a click-path,
+because Cloudflare's dashboard labels move: check the current
+[Cloudflare One docs](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
+for exact navigation. What the setup has to *achieve* is verifiable from here --
+see the doctor check below.
+
+**Verify it, do not assume it.** `npm run doctor` now has an edge-authentication
+section that makes an **anonymous** request to your public URL -- deliberately
+without the password -- and reports what an attacker holding only the URL
+receives:
+
+| What the doctor sees | Verdict |
+|---|---|
+| 302 to `<team>.cloudflareaccess.com` | `ok` -- Access is enforcing |
+| `/cdn-cgi/access/certs` answers but `/` does not redirect | `warn` -- Access knows the hostname but a policy is set to Bypass, or a path exclusion covers `/` |
+| 401 from OpenCode | `warn` -- no edge gate; the password is the only thing protecting you |
+| 200 | `FAIL` -- anyone with the URL has your server |
+
+**Three things worth knowing before you turn it on:**
+
+- **Keep `OPENCODE_SERVER_PASSWORD` set.** Access protects the *hostname*, not
+  this process. If the policy is removed, the app is set to Bypass, or the port
+  is ever exposed another way, the origin is otherwise naked. The doctor warns
+  when Access is enforcing but the password is unset.
+- **Set a long session duration.** A Home Screen PWA whose Access session has
+  expired receives a cross-origin redirect to `cloudflareaccess.com`, which does
+  not re-authenticate gracefully inside a standalone web app -- you get a
+  browser hand-off rather than a login inside the PWA.
+- **The event stream dies with the session.** The overlay's `EventSource` is
+  same-origin and carries the `CF_Authorization` cookie, so it works once you
+  are logged in. When the session expires mid-use, the stream gets redirected
+  and the overlay's reconnect backoff will not recover it until you reload and
+  re-authenticate. The session bar going stale is the symptom.
+
 ## Securing the tunnel
 
 **A tunnel publishes a server that can run shell commands in your working tree.**
@@ -529,7 +590,7 @@ are all covered by the same credential.
 | `npx opencode-mobile install [options]` | Install plugin and `/mobile` command globally |
 | `npx opencode-mobile update [--check]` | Check for updates or install the latest version |
 | `npx opencode-mobile filters <status\|enable\|disable>` | Manage session notification filters |
-| `npm run doctor` | Diagnose why the overlay is not showing up |
+| `npm run doctor` | Diagnose the chain end to end: plugin registration, build, running instances, local servers, tunnel target, public URL, and whether anything authenticates at the edge |
 | `npm run print-config` | Print the global config to load this checkout as a plugin |
 | `npm run print-config -- --merge` | Write that config to `~/.config/opencode/` |
 | `/mobile` | Display QR code for mobile connection |

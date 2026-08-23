@@ -419,6 +419,65 @@ if (meta?.url) {
   }
 }
 
+/* ---------- 7. is the edge enforcing anything? ---------- */
+if (meta?.url) {
+  section("7. edge authentication (Cloudflare Access)");
+
+  // Two independent signals, because either alone can mislead.
+  //
+  // 1. An unauthenticated request. With an Access policy on the hostname,
+  //    Cloudflare answers a 302 to <team>.cloudflareaccess.com rather than
+  //    letting the request reach this machine at all. Without one, the request
+  //    arrives here and the answer comes from OpenCode -- 200, or 401 if
+  //    OPENCODE_SERVER_PASSWORD is set.
+  //
+  // 2. The JWKS endpoint Access publishes on any protected hostname. This
+  //    confirms Access knows about the hostname even if the redirect is
+  //    ambiguous, and it needs no credentials.
+  //
+  // Deliberately sent WITHOUT the Basic header: the question is what an
+  // attacker who has only the URL receives.
+  const anon = await probe(meta.url, { timeout: 10000, headers: { accept: "text/html" } });
+  const location = anon.headers?.get?.("location") ?? "";
+  const toAccess = /\.cloudflareaccess\.com/.test(location);
+
+  const certs = await probe(new URL("/cdn-cgi/access/certs", meta.url).href, { timeout: 10000 });
+  const certsLookRight =
+    certs.status === 200 && typeof certs.body === "string" && certs.body.includes("keys");
+
+  if (toAccess) {
+    ok(`Access is enforcing: an anonymous request is redirected to the login page`);
+    info(`redirect: ${location.slice(0, 120)}`);
+    if (!PASSWORD) {
+      warn(`OPENCODE_SERVER_PASSWORD is not set`);
+      info(`Access protects the HOSTNAME, not this process. Keep the password set`);
+      info(`as well: if the policy is ever removed, the app is bypassed, or you`);
+      info(`expose the port another way, the origin is otherwise wide open.`);
+    } else {
+      ok(`OPENCODE_SERVER_PASSWORD is also set, so the origin is not naked behind it`);
+    }
+  } else if (certsLookRight) {
+    warn(`Access is configured for this hostname but did not challenge this request`);
+    info(`/cdn-cgi/access/certs answers, so the hostname is known to Access, but an`);
+    info(`anonymous request got HTTP ${anon.status} instead of a login redirect.`);
+    info(`Usually a policy set to Bypass, or a path exclusion that covers "/".`);
+  } else if (anon.error) {
+    warn(`could not reach ${meta.url} anonymously (${anon.error})`);
+  } else if (anon.status === 401) {
+    warn(`no edge authentication -- the only thing protecting you is the password`);
+    info(`HTTP 401 means the request reached this machine and OpenCode answered.`);
+    info(`Every unauthenticated request still arrives here, and nothing in the`);
+    info(`stack rate-limits or locks out repeated guesses.`);
+    info(`To put a gate at Cloudflare's edge instead, see "Edge authentication"`);
+    info(`in the README.`);
+  } else {
+    bad(`the public URL answers HTTP ${anon.status} with no authentication at all`);
+    info(`anyone with this URL has your OpenCode server. Set at minimum:`);
+    info(`  export OPENCODE_SERVER_PASSWORD=$(openssl rand -base64 24)`);
+    info(`and see "Edge authentication" in the README for a gate at Cloudflare.`);
+  }
+}
+
 /* ---------- summary ---------- */
 section(problems ? `${problems} problem(s) found above.` : "No problems found.");
 if (!problems) {
