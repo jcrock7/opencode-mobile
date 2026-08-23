@@ -131,8 +131,143 @@ export function buildOverlayCss(config: OverlayConfig): string {
      drawer's project navigation. */
 
   /* 6. Respect the home indicator so the composer is not half off-screen. */
-  [data-component="dock-prompt"] {
+  [data-component="dock-prompt"],
+  [data-component="session-prompt-dock"],
+  [data-component="session-followup-dock"] {
     padding-bottom: max(env(safe-area-inset-bottom), 8px) !important;
+  }
+
+  /* 7. Reclaim vertical space. On a 390x844 screen the status bar, titlebar,
+        tab row and session header together eat roughly a third of the height
+        before any content appears. Padding only -- no height guessing. */
+  [data-slot="titlebar-tab-item"] {
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+  }
+  [data-component="tabs"] {
+    min-height: 0 !important;
+  }
+
+  /* 8. Touch. 44pt is Apple's documented floor; the chrome controls are built
+        for a mouse. min-height on the control itself, so the hit area grows
+        without moving anything around it. */
+  [data-component="icon-button"],
+  [data-component="desktop-icon-button"],
+  [data-component="prompt-model-control"],
+  [data-component="prompt-agent-control"],
+  [data-component="prompt-variant-control"],
+  [data-slot="titlebar-tab-item"] > a,
+  [data-slot="titlebar-tab-item"] > button {
+    min-height: 44px !important;
+  }
+
+  /* 9. Scrolling that behaves like an app rather than a page.
+        The timeline should not rubber-band the whole document, and chrome
+        should not show a text cursor or a tap-highlight flash. */
+  [data-slot="session-turn-content"],
+  [data-component="session-turn"] {
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior: contain !important;
+  }
+  [data-component="icon-button"],
+  [data-component="desktop-icon-button"],
+  [data-slot="titlebar-tab-item"],
+  [data-component="tabs"],
+  [data-oc-strip],
+  [data-oc-status] {
+    -webkit-tap-highlight-color: transparent !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+  }
+  /* ...but never disable selection on the content itself: copying a path or an
+     error message out of a session is the whole point. */
+  [data-component="markdown"],
+  [data-component="markdown-code"],
+  [data-component="code"],
+  [data-component="diff"],
+  [data-component="bash-output"],
+  [data-component="tool-output"] {
+    -webkit-user-select: text !important;
+    user-select: text !important;
+  }
+}
+
+/* ---- now-running status bar ------------------------------------------------
+   Rendered by overlay.js, inserted immediately before the composer dock so it
+   pins with the dock instead of needing fixed-position offset arithmetic. */
+
+[data-oc-status] {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-weaker-base, rgba(127, 127, 127, 0.18));
+  background: var(--v2-background-bg-deep, var(--background-base, transparent));
+  font-family: var(--font-family-sans, system-ui, sans-serif);
+  font-size: 12px;
+  line-height: 1.3;
+  min-height: 32px;
+  color: var(--text-weak, #6b7280);
+}
+
+[data-oc-status][hidden] { display: none; }
+
+[data-oc-status] > [data-oc-status-dot] {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+[data-oc-status] > [data-oc-status-text] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+[data-oc-status] > [data-oc-status-time] {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+[data-oc-status][data-oc-state="busy"]      { color: #0c6e68; }
+[data-oc-status][data-oc-state="attention"] { color: #a0522a; }
+[data-oc-status][data-oc-state="error"]     { color: #a6342a; }
+
+[data-oc-status][data-oc-state="busy"] > [data-oc-status-dot] {
+  animation: oc-strip-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-oc-status][data-oc-state="busy"] > [data-oc-status-dot] { animation: none; }
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-oc-status][data-oc-state="busy"]      { color: #4ec3b8; }
+  [data-oc-status][data-oc-state="attention"] { color: #e0925d; }
+  [data-oc-status][data-oc-state="error"]     { color: #e4695d; }
+}
+
+/* ---- PWA standalone -------------------------------------------------------
+   Installed to the Home Screen, the page runs with no browser chrome. OpenCode
+   asks for 'apple-mobile-web-app-status-bar-style: black-translucent' and
+   'viewport-fit=cover', which means the document extends UNDER the status bar
+   and the home indicator. Upstream only pads for that in its newer layout
+   (layout-new.tsx), so in the shipped layout the titlebar sits beneath the
+   clock. Pad the app shell instead of any one component, so this holds
+   whichever layout is active. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  #root {
+    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-left: env(safe-area-inset-left, 0px) !important;
+    padding-right: env(safe-area-inset-right, 0px) !important;
   }
 }
 

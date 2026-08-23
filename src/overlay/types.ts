@@ -16,6 +16,13 @@ export interface OverlayConfig {
   enabled: boolean;
   /** Render the session switcher strip (needs the injected script). */
   sessionStrip: boolean;
+  /**
+   * Render the "now running" status bar above the composer.
+   *
+   * The single thing a phone screen cannot show you otherwise: what the agent
+   * is doing at this moment, without scrolling to find the live tool row.
+   */
+  statusBar: boolean;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
   /**

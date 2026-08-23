@@ -15,6 +15,7 @@ describe("overlay config", () => {
       expect(config).toEqual({
         enabled: true,
         sessionStrip: true,
+        statusBar: true,
         maxWidth: DEFAULT_MAX_WIDTH,
         debug: false,
       });
@@ -26,6 +27,13 @@ describe("overlay config", () => {
 
     it.each(["1", "true", "on", "yes", ""])("leaves the overlay enabled for %s", (value) => {
       expect(loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY: value }).enabled).toBe(true);
+    });
+
+    it("disables only the status bar independently", () => {
+      const config = loadOverlayConfig({ OPENCODE_MOBILE_OVERLAY_STATUS: "0" });
+      expect(config.enabled).toBe(true);
+      expect(config.sessionStrip).toBe(true);
+      expect(config.statusBar).toBe(false);
     });
 
     it("disables only the strip independently", () => {

@@ -17,6 +17,7 @@ export const DEFAULT_MAX_WIDTH = 767;
 const DEFAULT_CONFIG: OverlayConfig = {
   enabled: true,
   sessionStrip: true,
+  statusBar: true,
   maxWidth: DEFAULT_MAX_WIDTH,
   debug: false,
 };
@@ -52,6 +53,7 @@ export function loadOverlayConfig(env: NodeJS.ProcessEnv = process.env): Overlay
   return {
     enabled: !isDisabled(env.OPENCODE_MOBILE_OVERLAY),
     sessionStrip: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_STRIP),
+    statusBar: !isDisabled(env.OPENCODE_MOBILE_OVERLAY_STATUS),
     maxWidth: maxWidth ?? DEFAULT_CONFIG.maxWidth,
     debug: isEnabled(env.OPENCODE_MOBILE_OVERLAY_DEBUG),
   };

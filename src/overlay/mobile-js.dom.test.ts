@@ -1,0 +1,389 @@
+/**
+ * mobile-js.dom.test.ts - behavioural tests for the injected script.
+ *
+ * The script is a string of browser JavaScript, so the only way to know it
+ * works is to run it in a DOM. Everything it touches is stubbed here: a fake
+ * composer dock and timeline to mount into, a fake EventSource to push events
+ * through, and a fake fetch for the two endpoints it reads.
+ *
+ * Written after shipping two CSS rules that were wrong about the app's real
+ * structure -- asserting on the generated source text would not have caught
+ * either.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { Window } from "happy-dom";
+import { buildOverlayJs } from "./mobile-js";
+import type { OverlayConfig } from "./types";
+
+const CONFIG: OverlayConfig = {
+  enabled: true,
+  sessionStrip: true,
+  statusBar: true,
+  maxWidth: 767,
+  debug: false,
+};
+
+const SESSIONS = [
+  { id: "ses_a", title: "Migrate auth", time: { created: 1, updated: 20 } },
+  { id: "ses_b", title: "Fix tunnel", time: { created: 1, updated: 10 } },
+];
+
+interface Harness {
+  window: Window;
+  document: Document;
+  /** Push an SSE payload into the script. */
+  emit(payload: unknown): void;
+  status(): HTMLElement | null;
+  strip(): HTMLElement | null;
+  statusText(): string;
+  statusState(): string;
+  flush(): Promise<void>;
+}
+
+/** Stand-in EventSource whose instances are captured so tests can emit. */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onopen: (() => void) | null = null;
+  closed = false;
+  constructor(public url: string) {
+    FakeEventSource.instances.push(this);
+  }
+  close() {
+    this.closed = true;
+  }
+}
+
+async function harness(
+  options: {
+    path?: string;
+    sessions?: unknown;
+    statusMap?: unknown;
+    config?: Partial<OverlayConfig>;
+    width?: number;
+    withDock?: boolean;
+  } = {},
+): Promise<Harness> {
+  const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
+  const win = new Window({ url: "https://dev.example.org" + path, width: options.width ?? 390 });
+  const doc = win.document as unknown as Document;
+
+  // A minimal stand-in for the parts of OpenCode's DOM the script anchors to.
+  doc.body.innerHTML = `
+    <div id="root">
+      <div data-component="session-turn"><div data-slot="session-turn-content"></div></div>
+      ${options.withDock === false ? "" : '<div data-component="session-prompt-dock"></div>'}
+    </div>`;
+
+  FakeEventSource.instances = [];
+  const w = win as unknown as Record<string, unknown>;
+  w.EventSource = FakeEventSource;
+
+  const sessions = options.sessions ?? SESSIONS;
+  const statusMap = options.statusMap ?? { ses_a: { type: "idle" }, ses_b: { type: "idle" } };
+  w.fetch = vi.fn((url: string) => {
+    const body = url.includes("/session/status") ? statusMap : sessions;
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  });
+
+  // happy-dom implements matchMedia but not the width predicate we need.
+  w.matchMedia = (query: string) => {
+    const m = /max-width:\s*(\d+)px/.exec(query);
+    const limit = m ? Number(m[1]) : 0;
+    return {
+      matches: (options.width ?? 390) <= limit,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+    };
+  };
+
+  const js = buildOverlayJs({ ...CONFIG, ...options.config });
+  win.eval(js);
+
+  const flush = async () => {
+    // let the fetch promises and the script's own timers settle
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 5));
+  };
+  await flush();
+
+  const statusEl = () => doc.querySelector("[data-oc-status]") as HTMLElement | null;
+
+  return {
+    window: win,
+    document: doc,
+    emit(payload: unknown) {
+      for (const es of FakeEventSource.instances) {
+        es.onmessage?.({ data: JSON.stringify(payload) });
+      }
+    },
+    status: statusEl,
+    strip: () => doc.querySelector("[data-oc-strip]") as HTMLElement | null,
+    statusText: () =>
+      (statusEl()?.querySelector("[data-oc-status-text]") as HTMLElement | null)?.textContent ?? "",
+    statusState: () => statusEl()?.getAttribute("data-oc-state") ?? "",
+    flush,
+  };
+}
+
+function toolPart(overrides: Record<string, unknown> = {}) {
+  return {
+    type: "message.part.updated",
+    properties: {
+      sessionID: "ses_a",
+      part: {
+        type: "tool",
+        callID: "call_1",
+        tool: "bash",
+        state: { status: "running", title: "npm test", time: { start: Date.now() - 5000 } },
+        ...overrides,
+      },
+    },
+  };
+}
+
+let h: Harness | null = null;
+
+beforeEach(() => {
+  h = null;
+});
+
+afterEach(async () => {
+  await h?.window.happyDOM?.close?.();
+  vi.restoreAllMocks();
+});
+
+describe("mounting", () => {
+  it("inserts the status bar immediately before the composer dock", async () => {
+    h = await harness();
+    const bar = h.status();
+    expect(bar).not.toBeNull();
+    expect(bar!.nextElementSibling?.getAttribute("data-component")).toBe("session-prompt-dock");
+  });
+
+  it("falls back to after the timeline when there is no dock", async () => {
+    h = await harness({ withDock: false });
+    expect(h.status()).not.toBeNull();
+  });
+
+  it("does not mount on a wide viewport", async () => {
+    h = await harness({ width: 1200 });
+    expect(h.status()).toBeNull();
+    expect(h.strip()).toBeNull();
+  });
+
+  it("omits the status bar when the switch is off", async () => {
+    h = await harness({ config: { statusBar: false } });
+    expect(h.status()).toBeNull();
+  });
+
+  it("still mounts the status bar when the strip is off", async () => {
+    h = await harness({ config: { sessionStrip: false } });
+    expect(h.status()).not.toBeNull();
+    expect(h.strip()).toBeNull();
+  });
+});
+
+describe("what the agent is doing", () => {
+  it("is hidden while the session is idle", async () => {
+    h = await harness();
+    expect(h.status()!.hidden).toBe(true);
+  });
+
+  it("names the running tool and its title", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart());
+
+    expect(h.status()!.hidden).toBe(false);
+    expect(h.statusState()).toBe("busy");
+    expect(h.statusText()).toBe("bash · npm test");
+  });
+
+  it("shows just the tool when it has no distinct title", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart({ tool: "grep", state: { status: "running", title: "grep", time: { start: Date.now() } } }));
+    expect(h.statusText()).toBe("grep");
+  });
+
+  it("counts elapsed time from the tool's own start", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart({ state: { status: "running", title: "npm test", time: { start: Date.now() - 65_000 } } }));
+
+    const time = h.status()!.querySelector("[data-oc-status-time]")?.textContent;
+    expect(time).toBe("1:05");
+  });
+
+  it("drops the label when that tool completes", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart());
+    expect(h.statusText()).toBe("bash · npm test");
+
+    h.emit(toolPart({ state: { status: "completed", title: "npm test", time: { start: 1, end: 2 } } }));
+    // Still busy, but no specific tool to report.
+    expect(h.status()!.hidden).toBe(false);
+    expect(h.statusText()).toBe("Working");
+  });
+
+  it("ignores a tool from another session", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_b",
+        part: { type: "tool", tool: "grep", state: { status: "running", time: { start: Date.now() } } },
+      },
+    });
+    expect(h.statusText()).toBe("Working");
+  });
+
+  it("ignores non-tool parts", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({
+      type: "message.part.updated",
+      properties: { sessionID: "ses_a", part: { type: "text", text: "hello" } },
+    });
+    expect(h.statusText()).toBe("Working");
+  });
+
+  it("hides again when the session goes idle", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart());
+    expect(h.status()!.hidden).toBe(false);
+
+    h.emit({ type: "session.idle", properties: { sessionID: "ses_a" } });
+    expect(h.status()!.hidden).toBe(true);
+  });
+
+  it("reports a retry distinctly", async () => {
+    h = await harness();
+    h.emit({ type: "session.status", properties: { sessionID: "ses_a", status: { type: "retry" } } });
+    expect(h.statusState()).toBe("busy");
+    expect(h.statusText()).toBe("Retrying");
+  });
+});
+
+describe("states that need you", () => {
+  it("takes priority over a running tool", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart());
+    h.emit({ type: "permission.asked", properties: { sessionID: "ses_a", id: "p1" } });
+
+    expect(h.statusState()).toBe("attention");
+    expect(h.statusText()).toBe("Waiting for you to approve");
+  });
+
+  it("clears when the permission is answered", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit(toolPart());
+    h.emit({ type: "permission.asked", properties: { sessionID: "ses_a", id: "p1" } });
+    h.emit({ type: "permission.replied", properties: { sessionID: "ses_a", id: "p1" } });
+
+    expect(h.statusState()).toBe("busy");
+    expect(h.statusText()).toBe("bash · npm test");
+  });
+
+  it("reports an errored session", async () => {
+    h = await harness();
+    h.emit({ type: "session.error", properties: { sessionID: "ses_a", error: "boom" } });
+
+    expect(h.statusState()).toBe("error");
+    expect(h.statusText()).toBe("Session failed");
+  });
+});
+
+describe("the session strip", () => {
+  it("renders one chip per parent session", async () => {
+    h = await harness();
+    expect(h.strip()).not.toBeNull();
+    expect(h.strip()!.querySelectorAll("[data-oc-chip]").length).toBe(2);
+  });
+
+  it("hides itself with only one session", async () => {
+    h = await harness({ sessions: [SESSIONS[0]] });
+    expect(h.strip()!.hidden).toBe(true);
+  });
+
+  it("excludes child sessions", async () => {
+    h = await harness({
+      sessions: [...SESSIONS, { id: "ses_c", parentID: "ses_a", title: "sub", time: { created: 1, updated: 5 } }],
+    });
+    expect(h.strip()!.querySelectorAll("[data-oc-chip]").length).toBe(2);
+  });
+
+  it("marks the session in the URL as current", async () => {
+    h = await harness();
+    const current = h.strip()!.querySelector('[data-oc-current="true"]');
+    expect(current?.textContent).toContain("Migrate auth");
+  });
+
+  it("sorts the session needing attention first", async () => {
+    h = await harness();
+    h.emit({ type: "permission.asked", properties: { sessionID: "ses_b", id: "p1" } });
+
+    const first = h.strip()!.querySelector("[data-oc-chip]");
+    expect(first?.getAttribute("data-oc-state")).toBe("attention");
+    expect(first?.textContent).toContain("Fix tunnel");
+  });
+
+  it("builds hrefs by swapping the session id in the current path", async () => {
+    h = await harness();
+    const hrefs = [...h.strip()!.querySelectorAll("[data-oc-chip]")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/L3RtcC9wcm9q/session/ses_b");
+  });
+});
+
+describe("resilience", () => {
+  it("survives a malformed event", async () => {
+    h = await harness();
+    for (const es of FakeEventSource.instances) es.onmessage?.({ data: "not json" });
+    expect(h.status()).not.toBeNull();
+  });
+
+  it("survives an event with no properties", async () => {
+    h = await harness();
+    h.emit({ type: "message.part.updated" });
+    expect(h.status()).not.toBeNull();
+  });
+
+  it("hides the strip when the session list cannot be read", async () => {
+    const win = new Window({ url: "https://dev.example.org/d/session/ses_a", width: 390 });
+    const w = win as unknown as Record<string, unknown>;
+    w.EventSource = FakeEventSource;
+    w.matchMedia = () => ({
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+    });
+    w.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve(null) }));
+    (win.document as unknown as Document).body.innerHTML =
+      '<div id="root"><div data-component="session-prompt-dock"></div></div>';
+
+    win.eval(buildOverlayJs(CONFIG));
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 5));
+
+    const strip = (win.document as unknown as Document).querySelector("[data-oc-strip]") as HTMLElement;
+    expect(strip.hidden).toBe(true);
+    await win.happyDOM?.close?.();
+  });
+
+  it("re-mounts the status bar if the app replaces the dock", async () => {
+    h = await harness();
+    const root = h.document.getElementById("root")!;
+    h.status()!.remove();
+    expect(h.status()).toBeNull();
+
+    // A SPA re-render: swap the dock out and back.
+    root.querySelector('[data-component="session-prompt-dock"]')!.remove();
+    const dock = h.document.createElement("div");
+    dock.setAttribute("data-component", "session-prompt-dock");
+    root.appendChild(dock);
+
+    await h.flush();
+    expect(h.status()).not.toBeNull();
+  });
+});

@@ -26,8 +26,10 @@ export function buildOverlayJs(config: OverlayConfig): string {
   "use strict";
 
   var MAX_WIDTH = ${config.maxWidth};
-  var ENABLED = ${config.sessionStrip ? "true" : "false"};
-  if (!ENABLED || typeof window === "undefined" || !window.document) return;
+  var STRIP_ENABLED = ${config.sessionStrip ? "true" : "false"};
+  var STATUS_ENABLED = ${config.statusBar ? "true" : "false"};
+  if (typeof window === "undefined" || !window.document) return;
+  if (!STRIP_ENABLED && !STATUS_ENABLED) return;
 
   var REFRESH_MS = 20000;
   var RETRY_BASE_MS = 1000;
@@ -41,6 +43,10 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var errored = Object.create(null);
 
   var strip = null;
+  var statusEl = null;
+  var statusTick = null;
+  // The live tool for the session on screen: { tool, title, startedAt }.
+  var running = null;
   var stream = null;
   var observer = null;
   var refreshTimer = null;
@@ -198,7 +204,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   }
 
   function render() {
-    if (!strip) return;
+    if (!STRIP_ENABLED || !strip) return;
 
     if (listFailed || sessions.length < 2) {
       // One session is not a switcher, and a failed list should not leave an
@@ -217,6 +223,136 @@ export function buildOverlayJs(config: OverlayConfig): string {
     strip.appendChild(next);
     strip.hidden = false;
   }
+
+  /* ---------- status bar ---------- */
+
+  // Insert before the composer dock so it pins with the dock rather than
+  // needing fixed-position arithmetic against an unknown composer height.
+  function statusAnchor() {
+    var dock = document.querySelector(
+      '[data-component="session-prompt-dock"],' +
+      '[data-component="session-followup-dock"],' +
+      '[data-component="dock-prompt"]'
+    );
+    if (dock && dock.parentNode) return { parent: dock.parentNode, before: dock };
+    var turn = document.querySelector('[data-component="session-turn"]');
+    if (turn && turn.parentNode) return { parent: turn.parentNode, before: turn.nextSibling };
+    return null;
+  }
+
+  function mountStatus() {
+    if (!STATUS_ENABLED) return;
+    if (statusEl && statusEl.isConnected) return;
+
+    var point = statusAnchor();
+    if (!point) return;
+
+    if (!statusEl) {
+      statusEl = document.createElement("div");
+      statusEl.setAttribute("data-oc-status", "");
+      statusEl.setAttribute("role", "status");
+      statusEl.setAttribute("aria-live", "polite");
+      statusEl.hidden = true;
+
+      var dot = document.createElement("span");
+      dot.setAttribute("data-oc-status-dot", "");
+      var text = document.createElement("span");
+      text.setAttribute("data-oc-status-text", "");
+      var time = document.createElement("span");
+      time.setAttribute("data-oc-status-time", "");
+      statusEl.appendChild(dot);
+      statusEl.appendChild(text);
+      statusEl.appendChild(time);
+    }
+
+    point.parent.insertBefore(statusEl, point.before || null);
+    renderStatus();
+  }
+
+  function unmountStatus() {
+    if (statusEl && statusEl.parentNode) statusEl.parentNode.removeChild(statusEl);
+  }
+
+  function elapsed(since) {
+    if (!since) return "";
+    var secs = Math.max(0, Math.floor((Date.now() - since) / 1000));
+    var mins = Math.floor(secs / 60);
+    var rest = secs % 60;
+    return mins + ":" + (rest < 10 ? "0" : "") + rest;
+  }
+
+  /** The label for a running tool: prefer the tool's own title. */
+  function runningLabel(item) {
+    if (!item) return "Working";
+    if (item.title && item.title !== item.tool) return item.tool + " \u00b7 " + item.title;
+    return item.tool || "Working";
+  }
+
+  function renderStatus() {
+    if (!statusEl) return;
+
+    var route = routeParts();
+    var id = route && route.current;
+    if (!id) {
+      statusEl.hidden = true;
+      return;
+    }
+
+    var text = statusEl.querySelector("[data-oc-status-text]");
+    var time = statusEl.querySelector("[data-oc-status-time]");
+
+    if (attention[id]) {
+      statusEl.setAttribute("data-oc-state", "attention");
+      if (text) text.textContent = "Waiting for you to approve";
+      if (time) time.textContent = "";
+      statusEl.hidden = false;
+      return;
+    }
+
+    if (errored[id]) {
+      statusEl.setAttribute("data-oc-state", "error");
+      if (text) text.textContent = "Session failed";
+      if (time) time.textContent = "";
+      statusEl.hidden = false;
+      return;
+    }
+
+    var type = status[id];
+    if (type !== "busy" && type !== "retry") {
+      // Idle sessions get no bar: a permanent "idle" line is just a row of
+      // wasted screen on a phone.
+      statusEl.hidden = true;
+      return;
+    }
+
+    statusEl.setAttribute("data-oc-state", "busy");
+    var live = running && running.sessionID === id ? running : null;
+    if (text) text.textContent = type === "retry" ? "Retrying" : runningLabel(live);
+    if (time) time.textContent = live ? elapsed(live.startedAt) : "";
+    statusEl.hidden = false;
+  }
+
+  function startStatusTick() {
+    if (statusTick || !STATUS_ENABLED) return;
+    // Only the elapsed counter needs a tick; everything else is event driven.
+    statusTick = window.setInterval(function () {
+      if (!active() || !statusEl || statusEl.hidden) return;
+      var route = routeParts();
+      var id = route && route.current;
+      if (!id || status[id] !== "busy") return;
+      var live = running && running.sessionID === id ? running : null;
+      var time = statusEl.querySelector("[data-oc-status-time]");
+      if (time && live) time.textContent = elapsed(live.startedAt);
+    }, 1000);
+  }
+
+  function stopStatusTick() {
+    if (!statusTick) return;
+    window.clearInterval(statusTick);
+    statusTick = null;
+  }
+
+  /* ---------- session strip ---------- */
 
   function mount() {
     if (mounted && strip && strip.isConnected) return;
@@ -257,6 +393,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       }
       if (results[1] !== null) status = results[1];
       render();
+      renderStatus();
     });
   }
 
@@ -285,39 +422,66 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (!type) return;
     var id = sessionIdOf(payload);
 
+    // The only event that says WHAT is running, not just that something is.
+    if (type === "message.part.updated") {
+      var part = (payload.properties || {}).part;
+      if (!part || part.type !== "tool") return;
+      var state = part.state || {};
+      if (state.status === "running" || state.status === "pending") {
+        running = {
+          sessionID: id,
+          tool: String(part.tool || ""),
+          title: typeof state.title === "string" ? state.title : "",
+          startedAt: Number((state.time || {}).start) || Date.now()
+        };
+      } else if (running && running.sessionID === id && part.tool === running.tool) {
+        // The tool we were reporting finished; drop it rather than leaving a
+        // stale label and a counter that keeps climbing.
+        running = null;
+      }
+      renderStatus();
+      return;
+    }
+
     if (type === "session.status") {
       if (!id) return;
       var props = payload.properties || {};
       var raw = props.status;
       var next = typeof raw === "string" ? raw : (raw && raw.type);
       if (typeof next === "string") status[id] = next;
-      if (next === "idle") delete errored[id];
+      if (next === "idle") { delete errored[id]; running = null; }
       render();
+      renderStatus();
       return;
     }
 
     if (type === "session.idle") {
       if (!id) return;
       status[id] = "idle";
+      if (running && running.sessionID === id) running = null;
       render();
+      renderStatus();
       return;
     }
 
     if (type === "session.error") {
       if (id) errored[id] = true;
       render();
+      renderStatus();
       return;
     }
 
     if (type === "permission.asked" || type === "permission.v2.asked" || type === "permission.updated") {
       if (id) attention[id] = true;
       render();
+      renderStatus();
       return;
     }
 
     if (type === "permission.replied" || type === "permission.v2.replied") {
       if (id) delete attention[id];
       render();
+      renderStatus();
       return;
     }
 
@@ -384,8 +548,12 @@ export function buildOverlayJs(config: OverlayConfig): string {
     // strip. Re-mount instead of vanishing on the first navigation.
     observer = new window.MutationObserver(function () {
       if (!active()) return;
-      if (!strip || !strip.isConnected) mount();
-      else render();
+      if (STRIP_ENABLED) {
+        if (!strip || !strip.isConnected) mount();
+        else render();
+      }
+      if (!statusEl || !statusEl.isConnected) mountStatus();
+      else renderStatus();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
@@ -399,7 +567,9 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var poll = null;
 
   function start() {
-    mount();
+    if (STRIP_ENABLED) mount();
+    mountStatus();
+    startStatusTick();
     watchDom();
     refresh();
     openStream();
@@ -411,11 +581,13 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   function stop() {
     stopWatchingDom();
+    stopStatusTick();
     closeStream();
     if (poll) { window.clearInterval(poll); poll = null; }
     if (refreshTimer) { window.clearTimeout(refreshTimer); refreshTimer = null; }
     if (retryTimer) { window.clearTimeout(retryTimer); retryTimer = null; }
     unmount();
+    unmountStatus();
   }
 
   function sync() {
@@ -426,7 +598,11 @@ export function buildOverlayJs(config: OverlayConfig): string {
   if (typeof mq.addEventListener === "function") mq.addEventListener("change", sync);
   else if (typeof mq.addListener === "function") mq.addListener(sync);
 
-  window.addEventListener("popstate", function () { if (active()) render(); });
+  window.addEventListener("popstate", function () {
+    if (!active()) return;
+    render();
+    renderStatus();
+  });
 
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible" || !active()) return;

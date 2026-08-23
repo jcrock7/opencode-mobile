@@ -4,7 +4,32 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, maxWidth: 767, debug: false };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, maxWidth: 767, debug: false };
+
+/** Remove every balanced @media block, leaving only unconditional rules. */
+function stripMediaBlocks(css: string): string {
+  let out = "";
+  let i = 0;
+  while (i < css.length) {
+    const at = css.indexOf("@media", i);
+    if (at === -1) {
+      out += css.slice(i);
+      break;
+    }
+    out += css.slice(i, at);
+    const open = css.indexOf("{", at);
+    if (open === -1) break;
+    let depth = 1;
+    let j = open + 1;
+    while (j < css.length && depth > 0) {
+      if (css[j] === "{") depth++;
+      else if (css[j] === "}") depth--;
+      j++;
+    }
+    i = j;
+  }
+  return out;
+}
 
 interface Captured {
   status: number;
@@ -77,12 +102,17 @@ describe("overlay assets", () => {
       expect(css).toContain("font-size: 16px !important");
     });
 
-    it("styles the session strip outside the media query so it is never unstyled", () => {
+    it("styles the strip and status bar outside any media query", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
-      const stripAt = css.indexOf("[data-oc-strip]");
-      const mediaEnd = css.indexOf("/* ---- session switcher strip");
-      expect(stripAt).toBeGreaterThan(-1);
-      expect(stripAt).toBeGreaterThan(mediaEnd);
+      // Both are rendered by the script, which mounts them only on narrow
+      // viewports -- so their own styles must not be width-gated as well, or a
+      // rotation or a tablet leaves them unstyled. Strip every @media block and
+      // check the base rules survive.
+      const unconditional = stripMediaBlocks(css);
+      expect(unconditional).toContain("[data-oc-strip] {");
+      expect(unconditional).toContain("[data-oc-chip] {");
+      expect(unconditional).toContain("[data-oc-status] {");
+      expect(unconditional).toContain("[data-oc-status][hidden]");
     });
 
     it("omits the debug badge unless asked", () => {
@@ -101,6 +131,47 @@ describe("overlay assets", () => {
       const debug = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, debug: true })!;
       expect(debug.body).not.toBe(plain.body);
       expect(debug.etag).not.toBe(plain.etag);
+    });
+
+    it("pads the app shell for the notch when running standalone", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain("@media (display-mode: standalone)");
+      expect(css).toContain("padding-top: env(safe-area-inset-top, 0px) !important");
+      // The shell, not one component -- upstream has two layouts.
+      expect(css).toMatch(/#root\s*\{/);
+    });
+
+    it("pads the composer for the home indicator, whichever dock is in use", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      for (const dock of ["dock-prompt", "session-prompt-dock", "session-followup-dock"]) {
+        expect(css).toContain(`[data-component="${dock}"]`);
+      }
+      expect(css).toContain("env(safe-area-inset-bottom)");
+    });
+
+    it("gives chrome controls a 44px hit area", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-component="icon-button"]');
+      expect(css).toContain("min-height: 44px !important");
+    });
+
+    it("contains overscroll to the timeline", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain("overscroll-behavior: contain !important");
+    });
+
+    it("keeps content selectable while making chrome unselectable", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      // Copying a path or a stack trace out of a session must keep working.
+      expect(css).toMatch(/\[data-component="markdown"\][\s\S]{0,400}user-select: text/);
+    });
+
+    it("styles all four status-bar states", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      for (const state of ["busy", "attention", "error"]) {
+        expect(css).toContain(`[data-oc-status][data-oc-state="${state}"]`);
+      }
+      expect(css).toContain("[data-oc-status][hidden]");
     });
 
     it("does not hide the sidebar rail", () => {
@@ -124,7 +195,8 @@ describe("overlay assets", () => {
     it("bakes in the configured breakpoint", () => {
       const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
       expect(js).toContain("var MAX_WIDTH = 767;");
-      expect(js).toContain("var ENABLED = true;");
+      expect(js).toContain("var STRIP_ENABLED = true;");
+      expect(js).toContain("var STATUS_ENABLED = true;");
     });
 
     it("compiles to valid JavaScript", () => {
@@ -142,9 +214,14 @@ describe("overlay assets", () => {
       expect(js).not.toContain('method: "DELETE"');
     });
 
-    it("ships disabled when the strip is turned off", () => {
-      const js = getOverlayAsset(OVERLAY_JS_PATH, { ...CONFIG, sessionStrip: false })!.body;
-      expect(js).toContain("var ENABLED = false;");
+    it("reflects each switch independently", () => {
+      const noStrip = getOverlayAsset(OVERLAY_JS_PATH, { ...CONFIG, sessionStrip: false })!.body;
+      expect(noStrip).toContain("var STRIP_ENABLED = false;");
+      expect(noStrip).toContain("var STATUS_ENABLED = true;");
+
+      const noStatus = getOverlayAsset(OVERLAY_JS_PATH, { ...CONFIG, statusBar: false })!.body;
+      expect(noStatus).toContain("var STRIP_ENABLED = true;");
+      expect(noStatus).toContain("var STATUS_ENABLED = false;");
     });
   });
 
