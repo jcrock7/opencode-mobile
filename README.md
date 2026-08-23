@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 586 tests with an enforced 85% coverage threshold
+- Test suite grown to 628 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -461,6 +461,43 @@ Details that matter:
 
 Off with `OPENCODE_MOBILE_PROGRESS=0`; retimed with
 `OPENCODE_MOBILE_PROGRESS_AFTER=<seconds>`.
+
+## Security fix: the plugin's own endpoints
+
+**If you are running this fork with `OPENCODE_SERVER_PASSWORD` set, update.**
+
+The plugin is a reverse proxy in front of OpenCode, and it answers three paths
+itself -- `/push-token`, `/tunnel`, `/__oc-mobile/*` -- *before* the request
+reaches OpenCode. `OPENCODE_SERVER_PASSWORD` therefore never covered them.
+Anything that could reach the tunnel URL could reach them unauthenticated:
+
+| Request | Effect |
+|---|---|
+| `POST /push-token` | Registers any device to receive this server's push notifications. Their bodies quote the agent's last message, so an attacker's phone receives your session output. |
+| `DELETE /push-token` | Deregisters your real device. |
+| `POST /tunnel` | Opens a **new public tunnel to a caller-chosen local port** and returns the new public URL in the response body. Not merely an auth bypass -- a way to publish any service on your loopback interface. |
+
+A second vector reached the same endpoints without the tunnel at all: they
+answered CORS preflights with `Access-Control-Allow-Origin: *`, so any web page
+you visited could POST JSON to `http://127.0.0.1:<pluginPort>/tunnel`
+cross-origin and read the reply.
+
+Three changes:
+
+1. **The plugin authenticates its own endpoints.** When
+   `OPENCODE_SERVER_PASSWORD` is set, `/push-token` and `/tunnel` require the
+   same HTTP Basic credentials, compared in constant time, answering `401` with
+   a `WWW-Authenticate` challenge so the phone offers its saved credentials.
+2. **`POST /tunnel` only accepts the two ports this process owns** (its own and
+   OpenCode's). Enforced whether or not a password is set, because it is not an
+   authentication question -- no caller has a legitimate reason to name another
+   port.
+3. **No wildcard CORS origin.** The consumer is the native app, which is not a
+   browser and never enforced CORS, so the wildcard bought nothing.
+
+With no password configured the endpoints stay open -- requiring credentials
+nobody was told to set would lock out every existing install -- but startup now
+warns, in those words, that they are reachable.
 
 ## Securing the tunnel
 

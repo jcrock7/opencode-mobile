@@ -74,6 +74,14 @@ import {
 } from "./src/overlay";
 import { forwardRequest, forwardUpgrade, type ForwardOptions } from "./src/proxy/forward";
 import { routeRequest } from "./src/proxy/route";
+import {
+  loadAuthConfig,
+  guardPluginRoute,
+  tunnelTargetAllowed,
+  PLUGIN_CORS_HEADERS,
+  UNAUTHORIZED_HEADERS,
+  type PluginRouteKind,
+} from "./src/proxy/auth";
 
 function logPluginVersion(ctx: Parameters<Plugin>[0]): void {
   const client = (ctx as any)?.client;
@@ -391,11 +399,8 @@ async function maybeSendPushFromEvent(ctx: Parameters<Plugin>[0], event: any): P
   }
 }
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+// See PLUGIN_CORS_HEADERS: no wildcard origin, deliberately.
+const cors = PLUGIN_CORS_HEADERS;
 
 const TEST_PUSH_ENABLED = process.env.OPENCODE_MOBILE_TEST_PUSH === "1";
 
@@ -597,6 +602,7 @@ async function handleTunnel(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   defaultTargetPort: number,
+  allowedTargetPorts: number[] = [defaultTargetPort],
 ): Promise<void> {
   let body = "";
   if (req.method === "POST") {
@@ -607,6 +613,19 @@ async function handleTunnel(
   if (req.url === "/tunnel" && req.method === "POST") {
     try {
       const data = JSON.parse(body);
+
+      // A caller-chosen port turned this endpoint into a way to publish any
+      // service on the loopback interface -- and the response handed back the
+      // new public URL. Only the two ports this process already knows about
+      // are legitimate targets. Enforced regardless of authentication,
+      // because it is not an authentication question.
+      if (!tunnelTargetAllowed(data, allowedTargetPorts)) {
+        console.warn("[Tunnel] refused target port:", data?.port);
+        res.writeHead(403, { ...cors, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "tunnel target port not allowed" }));
+        return;
+      }
+
       const targetPort = data.port || defaultTargetPort;
 
       console.log("[Tunnel] Starting to port:", targetPort);
@@ -730,6 +749,9 @@ async function handleTunnel(
 async function startServer(port: number, openCodePort: number): Promise<boolean> {
   return new Promise((resolve) => {
     const overlay = loadOverlayConfig();
+    const auth = loadAuthConfig();
+    // The only two ports a tunnel has any business targeting.
+    const allowedTunnelPorts = [port, openCodePort];
     const forwardOptions: ForwardOptions = {
       targetPort: openCodePort,
       overlay: overlay.enabled ? overlay : null,
@@ -745,6 +767,30 @@ async function startServer(port: number, openCodePort: number): Promise<boolean>
         overlayEnabled: overlay.enabled,
       });
 
+      // The plugin's own endpoints are answered here, before anything reaches
+      // OpenCode -- so OPENCODE_SERVER_PASSWORD does not cover them. They have
+      // to check it themselves.
+      if (route.kind === "push-token" || route.kind === "tunnel") {
+        const guard = guardPluginRoute({
+          route: route.kind as PluginRouteKind,
+          method: clientReq.method,
+          authorization: clientReq.headers.authorization,
+          config: auth,
+          allowedTunnelPorts,
+        });
+        if (!guard.allowed) {
+          console.warn(
+            `[Push] refused ${clientReq.method} ${pathname}: ${guard.reason}`,
+          );
+          clientRes.writeHead(
+            guard.status,
+            guard.status === 401 ? { ...cors, ...UNAUTHORIZED_HEADERS } : { ...cors, "Content-Type": "application/json" },
+          );
+          clientRes.end(JSON.stringify({ error: guard.reason }));
+          return;
+        }
+      }
+
       switch (route.kind) {
         case "cors-preflight":
           clientRes.writeHead(204, cors);
@@ -756,7 +802,7 @@ async function startServer(port: number, openCodePort: number): Promise<boolean>
           return;
 
         case "tunnel":
-          handleTunnel(clientReq, clientRes, port);
+          handleTunnel(clientReq, clientRes, port, allowedTunnelPorts);
           return;
 
         case "overlay-asset":
@@ -796,6 +842,16 @@ async function startServer(port: number, openCodePort: number): Promise<boolean>
       console.log(`[Push] Server running on 127.0.0.1:${port}`);
       console.log(`[Push] /push-token/* → push token management`);
       console.log(`[Push] /tunnel/* → tunnel management`);
+      if (auth.password) {
+        console.log(`[Push] plugin endpoints require HTTP Basic (user "${auth.username}")`);
+      } else {
+        console.warn(
+          "[Push] WARNING: OPENCODE_SERVER_PASSWORD is not set, so /push-token and" +
+            " /tunnel are reachable by anyone who can reach the tunnel URL." +
+            " Registering a device there redirects this server's notifications," +
+            " which quote your session output.",
+        );
+      }
       if (overlay.enabled) {
         console.log(`[Push] ${OVERLAY_CSS_PATH} → mobile overlay stylesheet`);
         if (overlay.sessionStrip) {

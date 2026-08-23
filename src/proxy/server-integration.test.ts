@@ -8,6 +8,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as http from "http";
 import type { AddressInfo } from "net";
 import { routeRequest } from "./route";
+import {
+  loadAuthConfig,
+  guardPluginRoute,
+  PLUGIN_CORS_HEADERS,
+  UNAUTHORIZED_HEADERS,
+} from "./auth";
 import { forwardRequest, forwardUpgrade, type ForwardOptions } from "./forward";
 import {
   handleOverlayAsset,
@@ -22,11 +28,9 @@ const HTML =
 
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+// The real ones, not a copy: this harness's own copy had already drifted from
+// index.ts, which is how it kept asserting a wildcard origin that was gone.
+const cors = PLUGIN_CORS_HEADERS;
 
 let opencode: http.Server | null = null;
 let plugin: http.Server | null = null;
@@ -81,8 +85,10 @@ function makeOpenCode(): http.Server {
 /**
  * The plugin server, composed exactly as index.ts composes it.
  */
-function makePlugin(openCodePort: number): http.Server {
+function makePlugin(openCodePort: number, password?: string): http.Server {
   const overlay = loadOverlayConfig({});
+  const auth = loadAuthConfig(password ? { OPENCODE_SERVER_PASSWORD: password } : {});
+  const allowedTunnelPorts = [openCodePort];
   const forwardOptions: ForwardOptions = {
     targetPort: openCodePort,
     overlay: overlay.enabled ? overlay : null,
@@ -93,6 +99,24 @@ function makePlugin(openCodePort: number): http.Server {
   const server = http.createServer((req, res) => {
     const pathname = pathnameOf(req.url || "");
     const route = routeRequest({ pathname, method: req.method, overlayEnabled: overlay.enabled });
+
+    // Composed exactly as index.ts composes it: the guard runs before the
+    // plugin's own handlers, because OpenCode never sees these paths.
+    if (route.kind === "push-token" || route.kind === "tunnel") {
+      const guard = guardPluginRoute({
+        route: route.kind,
+        method: req.method,
+        authorization: req.headers.authorization,
+        config: auth,
+        allowedTunnelPorts,
+      });
+      if (!guard.allowed) {
+        pluginHandled.push("refused:" + pathname);
+        res.writeHead(guard.status, UNAUTHORIZED_HEADERS);
+        res.end(JSON.stringify({ error: guard.reason }));
+        return;
+      }
+    }
 
     switch (route.kind) {
       case "cors-preflight":
@@ -163,6 +187,89 @@ afterEach(async () => {
   await close(opencode);
   plugin = null;
   opencode = null;
+});
+
+describe("the plugin's own endpoints, with a password set", () => {
+  // OPENCODE_SERVER_PASSWORD protects OpenCode. It did not protect these,
+  // because the plugin answers them before OpenCode is ever consulted.
+  let guarded: http.Server | null = null;
+  let guardedPort = 0;
+  let openCodePortForGuarded = 0;
+
+  beforeEach(async () => {
+    openCodePortForGuarded = (opencode!.address() as AddressInfo).port;
+    guarded = makePlugin(openCodePortForGuarded, "s3cret");
+    guardedPort = await listen(guarded);
+  });
+
+  afterEach(async () => {
+    await close(guarded);
+    guarded = null;
+  });
+
+  function call(
+    path: string,
+    method: string,
+    headers: Record<string, string> = {},
+  ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port: guardedPort, path, method, headers },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c: Buffer) => chunks.push(c));
+          res.on("end", () =>
+            resolve({
+              status: res.statusCode || 0,
+              headers: res.headers,
+              body: Buffer.concat(chunks).toString(),
+            }),
+          );
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  const creds = "Basic " + Buffer.from("opencode:s3cret").toString("base64");
+
+  it("refuses an unauthenticated device registration", async () => {
+    const res = await call("/push-token", "POST");
+    expect(res.status).toBe(401);
+    expect(pluginHandled).toContain("refused:/push-token");
+    expect(pluginHandled).not.toContain("push-token:/push-token");
+  });
+
+  it("refuses an unauthenticated tunnel query", async () => {
+    const res = await call("/tunnel", "GET");
+    expect(res.status).toBe(401);
+  });
+
+  it("challenges so the phone can offer its saved credentials", async () => {
+    const res = await call("/push-token", "GET");
+    expect(res.headers["www-authenticate"]).toContain("Basic");
+  });
+
+  it("admits the right credentials", async () => {
+    const res = await call("/push-token", "GET", { authorization: creds });
+    expect(res.status).toBe(200);
+    expect(pluginHandled).toContain("push-token:/push-token");
+  });
+
+  it("still forwards OpenCode's own paths, which OpenCode authenticates", async () => {
+    // The guard must not become a second, divergent gate on the API itself.
+    const res = await call("/session", "GET");
+    expect(res.status).toBe(200);
+    expect(pluginHandled).not.toContain("refused:/session");
+  });
+
+  it("does not advertise a wildcard origin to browsers", async () => {
+    // The wildcard let any page the user visited drive these endpoints against
+    // localhost and read the reply.
+    const res = await call("/push-token", "OPTIONS", { authorization: creds });
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
 });
 
 describe("assembled plugin server", () => {
