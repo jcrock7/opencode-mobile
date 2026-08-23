@@ -244,11 +244,28 @@ const pluginCss = await probe(`http://127.0.0.1:${PLUGIN_PORT}/__oc-mobile/overl
 
 if (pluginRoot.error) {
   bad(`nothing answering on 127.0.0.1:${PLUGIN_PORT} (${pluginRoot.error})`);
-  info(`the plugin never started. Most common causes:`);
-  info(`  - not started with the 'serve' subcommand (plain 'opencode' and`);
-  info(`    'opencode attach' deliberately skip the server and tunnel)`);
-  info(`  - the plugin is not registered (see section 1)`);
-  info(`  - look for '[opencode-mobile] v...' in the opencode serve output`);
+  if (!oc.error) {
+    info(`OpenCode is up but the plugin has not initialised.`);
+    info(``);
+    info(`  Plugins are INSTANCE-scoped, and 'opencode serve' starts no instance:`);
+    info(`  it creates one per request, keyed by the ?directory= query or the`);
+    info(`  x-opencode-directory header. So a freshly started server has loaded no`);
+    info(`  plugins at all -- nothing on ${PLUGIN_PORT}, no tunnel, and no banner.`);
+    info(``);
+    info(`  Poke it once to make the plugin load (from a second terminal, leaving`);
+    info(`  'opencode serve' running):`);
+    info(``);
+    info(`    curl -su opencode:"$OPENCODE_SERVER_PASSWORD" \\`);
+    info(`      "http://127.0.0.1:${OPENCODE_PORT}/session?directory=$PWD" -o /dev/null -w '%{http_code}\\n'`);
+    info(``);
+    info(`  Then watch the serve output for '[opencode-mobile] v...' and re-run this.`);
+  } else {
+    info(`the plugin never started. Most common causes:`);
+    info(`  - not started with the 'serve' subcommand (plain 'opencode' and`);
+    info(`    'opencode attach' deliberately skip the server and tunnel)`);
+    info(`  - the plugin is not registered (see section 1)`);
+    info(`  - look for '[opencode-mobile] v...' in the opencode serve output`);
+  }
 } else {
   ok(`plugin answering on ${PLUGIN_PORT} (HTTP ${pluginRoot.status})`);
 

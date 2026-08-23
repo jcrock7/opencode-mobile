@@ -470,6 +470,29 @@ npx opencode-mobile uninstall --yes
 npx opencode-mobile install
 ```
 
+### The plugin does not start with `opencode serve`
+
+`opencode serve` starts the HTTP server but loads **no plugins**. Plugins are
+instance-scoped, and serve is declared `instance: false` -- it creates an instance
+per request, keyed by the `?directory=` query parameter or the
+`x-opencode-directory` header. Until something makes a request, there is no
+instance, so there is no plugin: nothing on port 4097, no tunnel, and no
+`[opencode-mobile] v...` banner.
+
+Leave the server running and poke it once from another terminal:
+
+```bash
+curl -su opencode:"$OPENCODE_SERVER_PASSWORD" \
+  "http://127.0.0.1:4096/session?directory=$HOME/your/project" \
+  -o /dev/null -w '%{http_code}\n'
+```
+
+The serve output should then print the plugin banner and its routes, and start the
+tunnel. Loading the web UI and opening a project has the same effect.
+
+Note also that `npm run doctor` probes live ports -- run it in a second terminal
+while the server is up, not after stopping it.
+
 ### Install fails on cloudflared
 
 **Problem**: `npm install` ends with
