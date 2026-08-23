@@ -998,7 +998,12 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
         // the old names only meant a permission request -- the one event that
         // BLOCKS the session until a human answers -- sent no notification at
         // all against any recent OpenCode.
-        eventType === "permission.v2.asked"
+        eventType === "permission.v2.asked" ||
+        // A question blocks in exactly the same way: the agent stops and waits
+        // for an answer. Nothing was sent for it at all, so a session could sit
+        // waiting indefinitely with no word to the phone.
+        eventType === "question.asked" ||
+        eventType === "question.v2.asked"
       ) {
         // Debug: Log event structure to diagnose child session detection
         if (DEBUG_ENABLED && eventType === "session.idle") {
@@ -1029,7 +1034,9 @@ export const PushNotificationPlugin: Plugin = async (ctx) => {
         eventType === "session.idle" ||
         eventType === "session.error" ||
         eventType === "permission.asked" ||
-        eventType === "permission.v2.asked"
+        eventType === "permission.v2.asked" ||
+        eventType === "question.asked" ||
+        eventType === "question.v2.asked"
       ) {
         const sessionID = extractSessionIdFromEvent(event);
         // The session has already notified about stopping; anything still

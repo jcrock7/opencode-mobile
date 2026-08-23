@@ -661,6 +661,59 @@ describe("the keyboard viewport", () => {
   });
 });
 
+describe("blocked on a human", () => {
+  // Both kinds stop the session dead. The status bar is the only on-screen
+  // signal the overlay controls, and it has to say which is wanted.
+  it("shows the approve wording for a permission", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({ type: "permission.v2.asked", properties: { sessionID: "ses_a", action: "bash" } });
+
+    expect(h.statusState()).toBe("attention");
+    expect(h.statusText()).toBe("Waiting for you to approve");
+  });
+
+  it("shows the answer wording for a question", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({ type: "question.asked", properties: { sessionID: "ses_a", id: "que_1" } });
+
+    expect(h.statusState()).toBe("attention");
+    expect(h.statusText()).toBe("Waiting for your answer");
+  });
+
+  it("handles the v2 question event too", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({ type: "question.v2.asked", properties: { sessionID: "ses_a", id: "que_1" } });
+    expect(h.statusText()).toBe("Waiting for your answer");
+  });
+
+  it("clears once the question is answered", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({ type: "question.asked", properties: { sessionID: "ses_a", id: "que_1" } });
+    expect(h.statusState()).toBe("attention");
+
+    h.emit({ type: "question.replied", properties: { sessionID: "ses_a", requestID: "que_1" } });
+    expect(h.statusState()).not.toBe("attention");
+  });
+
+  it("clears when the question is dismissed rather than answered", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" } } });
+    h.emit({ type: "question.asked", properties: { sessionID: "ses_a", id: "que_1" } });
+    h.emit({ type: "question.rejected", properties: { sessionID: "ses_a", requestID: "que_1" } });
+    expect(h.statusState()).not.toBe("attention");
+  });
+
+  it("marks the session chip as needing you", async () => {
+    h = await harness({ statusMap: { ses_a: { type: "busy" }, ses_b: { type: "busy" } } });
+    h.emit({ type: "question.asked", properties: { sessionID: "ses_b", id: "que_1" } });
+    await h.flush();
+
+    const chip = Array.from(h.document.querySelectorAll("[data-oc-chip]")).find(
+      (el) => el.querySelector("[data-oc-chip-label]")?.textContent === "Fix tunnel",
+    ) as HTMLElement | undefined;
+    expect(chip?.getAttribute("data-oc-state")).toBe("attention");
+  });
+});
+
 describe("sub-agent sessions", () => {
   // Child sessions are excluded from the strip as chips of their own, but the
   // work they do has to be visible somewhere: it used to show nowhere at all.

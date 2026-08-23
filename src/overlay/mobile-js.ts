@@ -519,7 +519,11 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
     if (attention[id]) {
       statusEl.setAttribute("data-oc-state", "attention");
-      if (text) text.textContent = "Waiting for you to approve";
+      if (text) {
+        text.textContent = attention[id] === "question"
+          ? "Waiting for your answer"
+          : "Waiting for you to approve";
+      }
       if (time) time.textContent = "";
       statusEl.hidden = false;
       return;
@@ -814,14 +818,27 @@ export function buildOverlayJs(config: OverlayConfig): string {
       return;
     }
 
+    // Both kinds block the session on a human. The value records which, so the
+    // status bar can say what is actually wanted rather than guessing.
     if (type === "permission.asked" || type === "permission.v2.asked" || type === "permission.updated") {
-      if (id) attention[id] = true;
+      if (id) attention[id] = "permission";
       render();
       renderStatus();
       return;
     }
 
-    if (type === "permission.replied" || type === "permission.v2.replied") {
+    if (type === "question.asked" || type === "question.v2.asked") {
+      if (id) attention[id] = "question";
+      render();
+      renderStatus();
+      return;
+    }
+
+    if (
+      type === "permission.replied" || type === "permission.v2.replied" ||
+      type === "question.replied" || type === "question.v2.replied" ||
+      type === "question.rejected" || type === "question.v2.rejected"
+    ) {
       if (id) delete attention[id];
       render();
       renderStatus();

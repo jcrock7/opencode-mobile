@@ -62,6 +62,8 @@ interface EventProperties {
   action?: string;
   /** permission.v2.asked: what it applies to. The v1 event called these patterns. */
   resources?: string[];
+  /** question.asked / question.v2.asked: the questions being put to the user. */
+  questions?: Array<{ question?: string; header?: string; options?: Array<{ label?: string }> }>;
 }
 
 /**
@@ -83,6 +85,8 @@ export function extractProjectPath(event: NotificationEvent, ctx?: PluginContext
     case "permission.updated":
     case "permission.asked":
     case "permission.v2.asked":
+    case "question.asked":
+    case "question.v2.asked":
       return (
         properties?.directory ||
         properties?.projectPath ||
@@ -235,7 +239,11 @@ export function formatNotification(
   // permission request is the opposite: it BLOCKS, and the session sits there
   // until a human answers. Suppressing it means the work stalls and nobody is
   // ever told, so permission kinds are exempt.
-  const blocking = type === "permission.asked" || type === "permission.v2.asked";
+  const blocking =
+    type === "permission.asked" ||
+    type === "permission.v2.asked" ||
+    type === "question.asked" ||
+    type === "question.v2.asked";
   if (!blocking && isChildSession(event)) {
     debugLog(`[formatNotification] Filtering child session (sessionId: ${sessionId || 'unknown'})`);
     return null;
@@ -381,6 +389,47 @@ export function formatNotification(
         data: { ...baseData, permissionId: properties?.permissionId },
         ios: iosThread,
       };
+    case "question.asked":
+    case "question.v2.asked": {
+      // A question blocks the session exactly as a permission does -- the agent
+      // stops and waits for a human -- and the plugin used to send nothing for
+      // it at all. The session sat there and the phone never heard.
+      const questions = Array.isArray(properties?.questions) ? properties.questions : [];
+      const first = questions[0] ?? {};
+      const header = typeof first.header === "string" ? first.header.trim() : "";
+      const text = typeof first.question === "string" ? first.question.trim() : "";
+      const options = Array.isArray(first.options) ? first.options : [];
+
+      const more = questions.length > 1 ? ` (+${questions.length - 1} more)` : "";
+      // Prefer the question itself; the header is a <=30 char label and makes a
+      // poor body on its own, but it is better than nothing.
+      const bodyText = truncateMultiline(text || header || "The agent needs an answer", 320) + more;
+      const choices = options
+        .map((option) => (typeof option.label === "string" ? option.label : ""))
+        .filter((label) => label.length > 0);
+
+      return {
+        title: project ? `${project} needs you` : "Question",
+        subtitle: header || sessionTitleForFiltering || undefined,
+        body: bodyText,
+        data: {
+          ...baseData,
+          questionId: properties?.id,
+          questionCount: questions.length,
+          options: choices,
+        },
+        android: {
+          notification: {
+            channelId: "opencode-sessions",
+            style: { type: "bigtext" as const, text: bodyText, title: header || "Question" },
+          },
+        },
+        // Deliberately no categoryId: the permission category's approve/reject
+        // actions cannot answer a multiple-choice or free-text question, and
+        // offering them would be a lie. Tapping opens the session.
+        ios: iosThread,
+      };
+    }
     case "permission.v2.asked": {
       // The current schema. It renamed the fields as well as the event:
       // `permission` -> `action`, `patterns` -> `resources`. Reading the v1

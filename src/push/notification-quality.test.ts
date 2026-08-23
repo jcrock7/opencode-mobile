@@ -492,3 +492,103 @@ describe("permission requests, both schema generations", () => {
     expect(notification).toBeNull();
   });
 });
+
+describe("questions", () => {
+  // A question blocks the session exactly as a permission does: the agent stops
+  // and waits for a human. The plugin sent nothing for it at all, so a session
+  // could sit waiting indefinitely with no word to the phone.
+  const request = (extra: Record<string, unknown> = {}) => ({
+    id: "que_1",
+    sessionID: "ses_1",
+    title: "Navbar scrollbar fix",
+    directory: "/home/dev/repos/miser",
+    questions: [
+      {
+        header: "Delete behaviour",
+        question: 'What should "keep the data" mean when deleting an account?',
+        options: [{ label: "Soft-delete account, keep data" }, { label: "Only allow delete when no data" }],
+      },
+    ],
+    ...extra,
+  });
+
+  it("notifies with the question itself", () => {
+    const notification = formatNotification({ type: "question.asked", properties: request() }, SERVER_URL);
+    expect(notification).not.toBeNull();
+    expect(notification?.body).toBe('What should "keep the data" mean when deleting an account?');
+    expect(notification?.title).toBe("miser needs you");
+    expect(notification?.subtitle).toBe("Delete behaviour");
+  });
+
+  it("handles the v2 event name too", () => {
+    const notification = formatNotification({ type: "question.v2.asked", properties: request() }, SERVER_URL);
+    expect(notification?.body).toBe('What should "keep the data" mean when deleting an account?');
+  });
+
+  it("carries the options so the app can render them", () => {
+    const notification = formatNotification({ type: "question.asked", properties: request() }, SERVER_URL);
+    expect(notification?.data).toMatchObject({
+      questionId: "que_1",
+      questionCount: 1,
+      options: ["Soft-delete account, keep data", "Only allow delete when no data"],
+    });
+  });
+
+  it("says how many more there are when several are asked at once", () => {
+    const notification = formatNotification(
+      {
+        type: "question.asked",
+        properties: request({
+          questions: [
+            { header: "A", question: "First?", options: [] },
+            { header: "B", question: "Second?", options: [] },
+            { header: "C", question: "Third?", options: [] },
+          ],
+        }),
+      },
+      SERVER_URL,
+    );
+    expect(notification?.body).toBe("First? (+2 more)");
+    expect(notification?.data).toMatchObject({ questionCount: 3 });
+  });
+
+  it("falls back to the header, then to a default", () => {
+    const headerOnly = formatNotification(
+      { type: "question.asked", properties: request({ questions: [{ header: "Pick one" }] }) },
+      SERVER_URL,
+    );
+    expect(headerOnly?.body).toBe("Pick one");
+
+    const bare = formatNotification(
+      { type: "question.asked", properties: request({ questions: [] }) },
+      SERVER_URL,
+    );
+    expect(bare?.body).toBe("The agent needs an answer");
+  });
+
+  it("offers no approve/reject actions", () => {
+    // The permission category's actions cannot answer a multiple-choice or
+    // free-text question, so offering them would be a lie.
+    const notification = formatNotification({ type: "question.asked", properties: request() }, SERVER_URL);
+    expect(notification?.categoryId).toBeUndefined();
+  });
+
+  it("reaches you even when a sub-agent is the one asking", () => {
+    const notification = formatNotification(
+      { type: "question.asked", properties: request({ parentSessionID: "ses_parent" }) },
+      SERVER_URL,
+    );
+    expect(notification).not.toBeNull();
+  });
+
+  it("keeps the question's line structure in the expanded body", () => {
+    const notification = formatNotification(
+      {
+        type: "question.asked",
+        properties: request({ questions: [{ header: "H", question: "Line one\n\nLine two" }] }),
+      },
+      SERVER_URL,
+    );
+    expect(notification?.android?.notification?.style?.text).toContain("\n");
+  });
+});

@@ -500,6 +500,38 @@ would be the better phone pattern, but the list wraps its groups in Tailwind
 making the existing columns fit. The rows themselves already wrap their control
 onto its own line below 640px upstream, so they only needed the touch target.
 
+## Questions and permission requests
+
+These are the two events that **block**: the agent stops and waits for a human.
+They are also the two the phone most needs to hear about, and both were broken.
+
+**Questions produced nothing at all.** When the agent asks you to choose --
+`Asked 1 question` in the TUI, with a numbered list of options -- it publishes
+`question.asked`. The plugin never listened for it, so a session could sit
+blocked indefinitely with no notification and no on-screen signal. Now it
+notifies with the question itself, the header as the subtitle, and the option
+labels in the payload. Deliberately **no** approve/reject actions: the
+permission category's buttons cannot answer a multiple-choice or free-text
+question, and offering them would be a lie -- tapping opens the session.
+
+**Permission requests were listening for the wrong name.** See below.
+
+The overlay's status bar now distinguishes the two, so the phone shows the state
+even when the on-screen dock does not appear:
+
+| State | Status bar |
+|---|---|
+| Permission pending | amber, "Waiting for you to approve" |
+| Question pending | amber, "Waiting for your answer" |
+
+**The on-screen dock is upstream's, not this plugin's.** The web UI renders both
+docks from OpenCode's own synced state -- it bootstraps pending questions and
+permissions on load and follows the live events, symmetrically. Everything it
+needs is there, so if a dock does not appear on the phone while the status bar
+does turn amber, the events are arriving and the fault is in the app's rendering
+or its auto-accept filter, not in the transport. That split is the fastest way to
+tell the two apart.
+
 ## Permission requests
 
 A permission request is the one event that **blocks**: the session stops and

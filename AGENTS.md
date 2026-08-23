@@ -387,10 +387,12 @@ signals.forEach((signal) => {
     `permission.asked {permission, patterns}`. Check the schema before
     filtering on an event name; `permission.updated` was filtered on for months
     and exists in neither. Handle both generations rather than picking one.
-28. **Blocking Events Are Never Suppressed**: the child-session filter exists
-    because sub-agent completions are noise. A permission request blocks the
-    session until a human answers, so suppressing it stalls the work silently.
-    Any new "quiet by default" filter has to exempt the blocking kinds.
+28. **Blocking Events Are Never Suppressed**: there are two -- a permission
+    request and a question -- and both stop the session until a human answers.
+    The child-session filter exists because sub-agent completions are noise;
+    these are the opposite, so suppressing one stalls the work silently. Any new
+    "quiet by default" filter has to exempt both, and anything that reports
+    "still working" has to treat them as not working.
 29. **A MutationObserver On `document.body` Must Not See Its Own Writes**: the
     overlay watches body for `childList` to re-mount after SPA navigation, and
     every renderer it calls writes to the DOM -- which is a childList mutation
