@@ -339,6 +339,41 @@ describe("overlay assets", () => {
       expect(css).not.toMatch(/\[data-slot="tabs-list"\]\s*\{[^}]*display: none/);
     });
 
+    it("re-centres the tab close button for the taller tab", () => {
+      // Upstream pins it with top: 4px against a 28px tab (4 + 20 + 4), so the
+      // 44px touch target left it 12px above centre.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-titlebar-tab\] \[data-slot="tab-close"\]\s*\{[^}]*margin-block: auto !important/,
+      );
+    });
+
+    it("does not centre the close button with a transform", () => {
+      // A container query already puts translateX(-50%) on that element once
+      // the tab is too narrow for its title. A translateY here would replace
+      // it and break the horizontal centring instead.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      const rule =
+        /\[data-titlebar-tab\] \[data-slot="tab-close"\]\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+      expect(rule).not.toContain("transform");
+      // Both insets are required for auto margins to centre anything.
+      expect(rule).toContain("top: 0 !important");
+      expect(rule).toContain("bottom: 0 !important");
+    });
+
+    it("puts the changes button on the same line as the tabs", () => {
+      // Stretching and centring the glyph inside matches how the tab strip
+      // centres its own contents, so the two agree by construction rather than
+      // by a tuned offset.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      const rule = /\[data-oc-changes\]\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+      // Comments explain what was rejected and would match a naive search.
+      const declarations = rule.replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(declarations).toContain("align-self: stretch !important");
+      expect(declarations).toContain("align-items: center !important");
+      expect(declarations).not.toContain("align-self: center");
+    });
+
     it("styles the changes button as a 44px target with a count badge", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       expect(css).toMatch(/\[data-oc-changes\]\s*\{[^}]*min-height: 44px !important/);

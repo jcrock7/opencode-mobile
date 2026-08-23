@@ -119,7 +119,13 @@ export function buildOverlayCss(config: OverlayConfig): string {
     position: relative !important;
     margin-left: auto !important;
     margin-right: 6px !important;
-    align-self: center !important;
+    /* Stretch, then centre the glyph inside -- rather than 'align-self: center',
+       which centres the button in the header and lands a few pixels off the tab
+       line. The tab strip is itself a stretched flex child that centres its own
+       contents, so matching that construction makes the two agree by
+       definition instead of by a tuned offset. */
+    align-self: stretch !important;
+    height: auto !important;
     min-width: 44px !important;
     min-height: 44px !important;
     padding: 0 !important;
@@ -423,6 +429,20 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-slot="titlebar-tab-item"] > a,
   [data-slot="titlebar-tab-item"] > button {
     min-height: 44px !important;
+  }
+
+  /* The tab's close button re-centred for the taller tab. Upstream pins it with
+     'top: 4px' against a 28px tab (4 + 20 + 4), so raising the tab to 44px left
+     it 12px above centre.
+
+     Centred with auto block margins against both insets rather than a
+     transform, because a container query already puts 'translateX(-50%)' on
+     this element once the tab is too narrow to show its title -- a translateY
+     here would replace that and break the horizontal centring instead. */
+  [data-titlebar-tab] [data-slot="tab-close"] {
+    top: 0 !important;
+    bottom: 0 !important;
+    margin-block: auto !important;
   }
 
   /* Menus and dropdowns are lists you tap, not hover. */
