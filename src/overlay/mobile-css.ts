@@ -97,14 +97,16 @@ export function buildOverlayCss(config: OverlayConfig): string {
     min-height: 44px !important;
   }
 
-  /* 6. Reclaim the fixed 64px rail. Below 1280px OpenCode already provides an
-        off-canvas drawer, so the rail is duplicated navigation costing ~16% of
-        an iPhone's width. */
-  [data-component="sidebar-rail"] {
-    display: none !important;
-  }
+  /* NOTE: do not hide [data-component="sidebar-rail"].
+     An earlier version of this overlay did, on the assumption that the rail was
+     pinned on screen at every width. It is not: the persistent sidebar
+     ([data-component="sidebar-nav-desktop"]) is already 'hidden xl:block', so
+     OpenCode hides that rail below 1280px itself. The only rail rendered on a
+     phone is the one INSIDE the drawer, which carries the project avatars and
+     the "open project" button -- hiding it gained nothing and removed the
+     drawer's project navigation. */
 
-  /* 7. Respect the home indicator so the composer is not half off-screen. */
+  /* 6. Respect the home indicator so the composer is not half off-screen. */
   [data-component="dock-prompt"] {
     padding-bottom: max(env(safe-area-inset-bottom), 8px) !important;
   }

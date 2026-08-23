@@ -85,6 +85,15 @@ describe("overlay assets", () => {
       expect(stripAt).toBeGreaterThan(mediaEnd);
     });
 
+    it("does not hide the sidebar rail", () => {
+      // The persistent sidebar is already `hidden xl:block` upstream, so the
+      // only rail on a phone is the one inside the drawer -- and that one
+      // carries the project avatars and the open-project button. Hiding it
+      // removed the drawer's navigation and gained nothing.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).not.toMatch(/\[data-component="sidebar-rail"\]\s*\{[^}]*display:\s*none/);
+    });
+
     it("covers all four session states", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       for (const state of ["busy", "attention", "error", "idle"]) {

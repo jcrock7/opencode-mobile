@@ -278,7 +278,6 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   wrapping (a wrapped diff loses its +/- alignment)
 - Restores the timeline scrollbar, so you can tell where you are in a long session
 - Enforces 44px touch targets on the accordion triggers
-- Hides the fixed 64px sidebar rail, which duplicates the drawer below 1280px
 - Pads the composer for the home indicator
 - Adds a **session switcher**: a horizontally scrolling strip of chips above the
   timeline, one per session, coloured by state and sorted so anything needing you
