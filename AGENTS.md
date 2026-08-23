@@ -376,7 +376,12 @@ signals.forEach((signal) => {
     stylesheet, so a literal colour is wrong in one of them. The strip's state
     colours are the deliberate exception -- they carry meaning, and they are
     paired with a `prefers-color-scheme` block.
-26. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+26. **Check Whether Upstream Already Draws It**: `[data-slot="user-message-text"]`
+    already had the bubble -- background, padding, radius -- and the container
+    already right-aligned it. Adding a box produced a bubble inside a bubble.
+    Read the component's own CSS before styling a container around it; the
+    overlay's job is usually to adjust what exists, not to add a layer.
+27. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

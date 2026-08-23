@@ -40,16 +40,19 @@ export function buildOverlayCss(config: OverlayConfig): string {
     ? `
 /* ---- transcript tiers (OPENCODE_MOBILE_OVERLAY_BUBBLES=0 to disable) -------- */
 @media (max-width: ${config.maxWidth}px) {
-  /* 1. Your message: a bubble, inset from the right so it reads as yours.
-        The squared bottom-right corner is the tail -- an asymmetric radius
-        rather than a pseudo-element triangle, which would have to know the
-        bubble's background and would break on a theme change. */
-  [data-timeline-row="UserMessage"] [data-slot="session-turn-message-content"] {
-    margin-left: auto !important;
+  /* 1. Your message. Upstream ALREADY draws this bubble: the container is a
+        flex column with align-items: flex-end, and [data-slot="user-message-text"]
+        carries the layer background, 8px 12px of padding and a 10px radius. An
+        earlier version of this rule boxed the whole row on top of that, which
+        produced a bubble inside a bubble -- with the message actions row
+        padding out the outer one so it towered over the inner.
+
+        So this styles upstream's own bubble rather than adding one: the tail
+        corner, a hairline so it separates from a black background, and a width
+        cap so a long prompt still reads as inset rather than full-bleed. */
+  [data-component="user-message"] [data-slot="user-message-text"] {
     max-width: 88% !important;
-    padding: 10px 12px !important;
     border-radius: 14px 14px 4px 14px !important;
-    background: var(--v2-background-bg-layer-02, rgba(127, 127, 127, 0.14)) !important;
     box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted, rgba(127, 127, 127, 0.28)) !important;
   }
 
@@ -88,6 +91,72 @@ export function buildOverlayCss(config: OverlayConfig): string {
 }
 `
     : "";
+
+  /* ---- settings dialog ------------------------------------------------------
+     Built for a desktop and painful on a phone. Three measured causes, all in
+     upstream's own CSS:
+
+       dialog-v2.css  x-large is 'height: min(100vh - 92px, 600px)', so on an
+                      852pt phone the dialog stops at 600pt and floats in a
+                      252pt band of dead space.
+       tabs.css       the settings vertical tab list is 'min-width: 150px'.
+                      Of a 361pt-wide dialog that leaves the content pane about
+                      200pt, which is why every description wraps after two or
+                      three words.
+       settings-v2.css the header and body carry 40px side gutters, taking
+                      another 80pt out of that 200.
+
+     So: full-screen, a narrower nav, and phone-sized gutters. Nothing is
+     restructured -- flipping the vertical tabs into a horizontal strip would
+     mean fighting the Tailwind flex-col wrappers inside the list, which is far
+     more brittle than making the existing columns fit. */
+  const settings = `
+@media (max-width: ${config.maxWidth}px) {
+  /* A settings screen on a phone is a screen, not a card. Insets applied here
+     because the dialog is portalled outside the app shell, so the padding the
+     overlay puts on #root never reaches it. */
+  [data-component="dialog-v2"][data-size="x-large"] [data-slot="dialog-container"] {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    border-radius: 0 !important;
+    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+  }
+
+  /* The nav. 150px of a 393pt screen is most of the reason the content column
+     was unreadable; these five labels fit comfortably in 112. */
+  .settings-v2 [data-slot="tabs-list"] {
+    width: 112px !important;
+    min-width: 112px !important;
+    padding: 8px 6px !important;
+  }
+  .settings-v2 [data-slot="tabs-trigger"] {
+    padding: 0 6px !important;
+    gap: 6px !important;
+  }
+  /* The version stamp is the one thing here worth nothing on a phone. */
+  .settings-v2-nav-footer {
+    display: none !important;
+  }
+
+  /* Phone gutters, not desktop ones. */
+  .settings-v2-tab-header {
+    padding: 16px 16px 12px !important;
+  }
+  .settings-v2-tab-body {
+    padding: 0 16px 16px !important;
+    gap: 24px !important;
+  }
+
+  /* Rows already wrap their control onto its own line below 640px upstream, so
+     they only need the touch target the rest of the overlay gives everything. */
+  [data-component="settings-v2-row"] {
+    padding-block: 14px !important;
+  }
+}
+`;
 
   const debugBadge = config.debug
     ? `
@@ -649,5 +718,5 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-oc-chip][data-oc-state="attention"] { color: #e0925d; background: rgba(224, 146, 93, 0.16); }
   [data-oc-chip][data-oc-state="error"]     { color: #e4695d; background: rgba(228, 105, 93, 0.16); }
 }
-${bubbles}${debugBadge}`;
+${bubbles}${settings}${debugBadge}`;
 }

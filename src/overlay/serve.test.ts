@@ -179,17 +179,23 @@ describe("overlay assets", () => {
       );
     });
 
-    it("gives your message a bubble, inset from the right", () => {
-      // The single strongest "this is mine" signal, and what makes the answer
-      // legible as a separate thing.
+    it("styles upstream's own user bubble rather than adding a second one", () => {
+      // Upstream already draws it: the container is a flex column with
+      // align-items: flex-end and [data-slot="user-message-text"] carries the
+      // background, padding and radius. Boxing the row on top of that produced
+      // a bubble inside a bubble.
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
-      expect(css).toContain('[data-timeline-row="UserMessage"]');
-      expect(css).toMatch(
-        /\[data-timeline-row="UserMessage"\][\s\S]{0,300}margin-left: auto !important/,
-      );
+      expect(css).toContain('[data-component="user-message"] [data-slot="user-message-text"]');
       // Asymmetric radius is the tail; a pseudo-element triangle would have to
       // know the bubble's background and break on a theme change.
       expect(css).toContain("border-radius: 14px 14px 4px 14px !important");
+    });
+
+    it("never gives the user's row a box of its own", () => {
+      // The regression guard for the double bubble.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).not.toContain('[data-timeline-row="UserMessage"] [data-slot="session-turn-message-content"]');
+      expect(css).not.toMatch(/\[data-timeline-row="UserMessage"\][^{]*\{[^}]*background:/);
     });
 
     it("rails the response rather than boxing each part", () => {
@@ -235,8 +241,10 @@ describe("overlay assets", () => {
       // Hard-coded colours would look wrong in the light theme, which the
       // overlay has no way to detect from a stylesheet.
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
-      expect(css).toContain("var(--v2-background-bg-layer-02");
+      // The bubble's own background is upstream's; what the overlay adds is the
+      // hairline and the tool-row surface, and both come from tokens.
       expect(css).toContain("var(--v2-border-border-muted");
+      expect(css).toContain("var(--v2-background-bg-layer-01");
     });
 
     it("omits the tiers entirely when switched off", () => {
@@ -257,6 +265,53 @@ describe("overlay assets", () => {
       const off = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, bubbles: false })!;
       expect(off.body).not.toBe(on.body);
       expect(off.etag).not.toBe(on.etag);
+    });
+
+    it("makes the settings dialog a full screen, not a floating card", () => {
+      // Upstream caps x-large at min(100vh - 92px, 600px), so on an 852pt phone
+      // it stopped at 600 and floated in a band of dead space.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('[data-component="dialog-v2"][data-size="x-large"]');
+      expect(css).toMatch(/\[data-slot="dialog-container"\]\s*\{[^}]*height: 100% !important/);
+      expect(css).toMatch(/\[data-slot="dialog-container"\]\s*\{[^}]*border-radius: 0 !important/);
+    });
+
+    it("pads the settings dialog for the insets itself", () => {
+      // It is portalled outside the app shell, so the padding the overlay puts
+      // on #root never reaches it.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\[data-slot="dialog-container"\]\s*\{[^}]*padding-top: env\(safe-area-inset-top/,
+      );
+    });
+
+    it("narrows the settings nav so the content column is readable", () => {
+      // 150px of a 393pt screen left descriptions wrapping after two words.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(
+        /\.settings-v2 \[data-slot="tabs-list"\]\s*\{[^}]*min-width: 112px !important/,
+      );
+    });
+
+    it("replaces the settings gutters with phone-sized ones", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(/\.settings-v2-tab-header\s*\{[^}]*padding: 16px 16px 12px !important/);
+      expect(css).toMatch(/\.settings-v2-tab-body\s*\{[^}]*padding: 0 16px 16px !important/);
+    });
+
+    it("keeps the settings rules behind the phone breakpoint", () => {
+      // A 112px nav and a full-bleed dialog are wrong on a desktop.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      const unconditional = stripMediaBlocks(css);
+      expect(unconditional).not.toContain("settings-v2-tab-header");
+      expect(unconditional).not.toContain('[data-size="x-large"]');
+    });
+
+    it("keeps the settings rules when the transcript tiers are off", () => {
+      // They are separate concerns; the bubbles switch is about the transcript.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, bubbles: false })!.body;
+      expect(css).toContain("settings-v2-tab-header");
+      expect(css).toContain('[data-size="x-large"]');
     });
 
     it("collapses the bottom safe-area inset while the keyboard is open", () => {

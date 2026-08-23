@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 645 tests with an enforced 85% coverage threshold
+- Test suite grown to 652 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -343,10 +343,14 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   agent's prose and every tool row at the same weight, in the same colour, down
   the same full-width column -- on a phone that reads as one wall of text, where
   a shell command looks exactly like a sentence. Three tiers instead:
-  **your message** becomes a bubble inset from the right (the squared
-  bottom-right corner is the tail -- an asymmetric radius rather than a
-  pseudo-element triangle, which would have to know the bubble's background and
-  break on a theme change); **the response** stays full width, because prose,
+  **your message** keeps upstream's own bubble -- which already exists, right
+  aligned, on `[data-slot="user-message-text"]` -- and gains a tail corner, a
+  hairline so it separates from a black background, and a width cap. The tail is
+  an asymmetric `border-radius` rather than a pseudo-element triangle, which
+  would have to know the bubble's background and break on a theme change.
+  Styling upstream's bubble rather than adding one matters: an earlier version
+  boxed the whole row and produced a bubble inside a bubble. **The response**
+  stays full width, because prose,
   code and diffs all need the room, but gains a rail down its left edge so the
   whole answer reads as one channel; **tool rows** are demoted to a subdued card
   so the eye can skip them when reading and find them when scanning. Errors and
@@ -452,6 +456,24 @@ would reliably win.
 
 The overlay targets `data-component` / `data-slot` attributes. If a future OpenCode
 release renames one, that rule stops applying -- it does not break the page.
+
+## The settings screen on a phone
+
+Upstream's settings dialog is built for a desktop, and three of its own
+measurements make it painful at 393pt. All three are fixed behind the phone
+breakpoint:
+
+| Upstream | Consequence | Overlay |
+|---|---|---|
+| `dialog-v2.css`: x-large is `height: min(100vh - 92px, 600px)` | On an 852pt phone the dialog stops at 600pt and floats in a band of dead space | Full screen, square corners, padded for the insets itself -- it is portalled outside the app shell, so the padding on `#root` never reaches it |
+| `tabs.css`: the settings tab list is `min-width: 150px` | Of a 361pt dialog that leaves ~200pt of content, so every description wraps after two or three words | 112px, which these five labels fit comfortably |
+| `settings-v2.css`: 40px side gutters on the header and body | Another 80pt out of that 200 | 16px |
+
+Nothing is restructured. Flipping the vertical tabs into a horizontal strip
+would be the better phone pattern, but the list wraps its groups in Tailwind
+`flex-col` divs, and fighting those with `!important` is far more brittle than
+making the existing columns fit. The rows themselves already wrap their control
+onto its own line below 640px upstream, so they only needed the touch target.
 
 ## Progress notifications
 
