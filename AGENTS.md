@@ -322,7 +322,25 @@ signals.forEach((signal) => {
 14. **Overlay Selectors are Best-Effort**: The overlay targets OpenCode's
     `data-component` / `data-slot` attributes. If upstream renames one, the rule
     stops applying -- acceptable. Never make the page's function depend on a rule
-    landing.
+    landing. Two traps worth naming: upstream ships two generations of most
+    controls, so a rule that lists only the v1 selector silently does nothing on
+    the phone (the v2 set renders there); and it ships two layouts, so anything
+    keyed to the app shell has to say which one it means.
+15. **Never Add Padding an Upstream Layout Already Adds**: `layout-new.tsx`
+    applies `padding-top`/`padding-bottom` from the safe-area insets to its own
+    root; `layout.tsx` applies neither. A rule on `#root` that is not gated on
+    the layout doubles the inset on one of them.
+16. **Size Floors Need Room to Grow**: A `min-width`/`min-height` floor only
+    helps where the container can accommodate it. In a fixed-height row inside
+    an `overflow-clip` ancestor -- the composer's control row -- a floor makes
+    the control overflow its slot and paint over its neighbour. Grow the tap
+    area with an inset pseudo-element there instead.
+17. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+    the software keyboard, and `#root` is `height: 100vh` in standalone mode by
+    upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
+    CSS unit does. Anything that pins the shell must apply solely while
+    installed and at phone widths, and must hand the height back when the
+    keyboard closes.
 
 ## Configuration
 

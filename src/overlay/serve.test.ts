@@ -4,7 +4,7 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, maxWidth: 767, debug: false };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, maxWidth: 767, debug: false };
 
 /** Remove every balanced @media block, leaving only unconditional rules. */
 function stripMediaBlocks(css: string): string {

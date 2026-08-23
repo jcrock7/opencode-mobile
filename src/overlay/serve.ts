@@ -29,6 +29,7 @@ function cacheKey(config: OverlayConfig): string {
     config.maxWidth,
     config.sessionStrip ? 1 : 0,
     config.statusBar ? 1 : 0,
+    config.keyboardViewport ? 1 : 0,
     config.debug ? 1 : 0,
   ].join(":");
 }

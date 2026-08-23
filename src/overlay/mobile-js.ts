@@ -28,8 +28,92 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var MAX_WIDTH = ${config.maxWidth};
   var STRIP_ENABLED = ${config.sessionStrip ? "true" : "false"};
   var STATUS_ENABLED = ${config.statusBar ? "true" : "false"};
+  var KEYBOARD_ENABLED = ${config.keyboardViewport ? "true" : "false"};
   if (typeof window === "undefined" || !window.document) return;
-  if (!STRIP_ENABLED && !STATUS_ENABLED) return;
+
+  /* ---------- keyboard viewport ----------
+     Installed to the Home Screen, OpenCode sets '#root { height: 100vh }' --
+     deliberately, because WebKit excludes the safe-area insets from dvh in an
+     installed app. But 100vh is the LAYOUT viewport, and iOS does not shrink
+     that when the software keyboard opens: it shrinks only the visual
+     viewport, then scrolls the document to bring the focused field into view.
+
+     Two symptoms, one cause. The scroll drags the top of the shell -- and the
+     safe-area padding with it -- above the visible area, so the timeline runs
+     under the clock. And the shell still believes it is full height, so the
+     composer sits adrift of the keyboard instead of resting on it.
+
+     Pinning the shell to visualViewport.height fixes both. There is no CSS
+     unit for this on iOS: dvh tracks browser chrome, not the keyboard, and
+     env(keyboard-inset-*) needs the VirtualKeyboard API, which WebKit does not
+     implement. The viewport meta already asks for interactive-widget=
+     resizes-content; iOS ignores it.
+
+     Only in standalone mode. In a browser tab Safari's own toolbar collapses
+     on scroll, which moves visualViewport.height for reasons that have nothing
+     to do with the keyboard, and pinning to it there would fight the browser. */
+  function setupKeyboardViewport() {
+    var vv = window.visualViewport;
+    if (!vv) return;
+    var standalone = window.matchMedia("(display-mode: standalone), (display-mode: fullscreen)");
+    var root = document.getElementById("root");
+    if (!root) return;
+    var appliedHeight = -1;
+    var frame = null;
+
+    function clear() {
+      appliedHeight = -1;
+      root.style.removeProperty("height");
+    }
+
+    function apply() {
+      frame = null;
+      // Only while installed and only on a phone-sized viewport. Anywhere else
+      // upstream's own height is right and we must not hold it hostage.
+      if (!standalone.matches || !mq.matches) {
+        if (appliedHeight !== -1) clear();
+        return;
+      }
+      // Undo the document scroll iOS applied to reveal the focused field. Once
+      // the shell fits the visible area that scroll is pure damage -- it is
+      // what drags the titlebar up under the clock.
+      if (window.scrollY !== 0 || vv.offsetTop !== 0) window.scrollTo(0, 0);
+
+      var height = Math.round(vv.height);
+      if (!(height > 0)) return;
+      // No keyboard: hand the height back to upstream's own rule rather than
+      // pinning a pixel value that the next rotation would make wrong.
+      if (height >= Math.round(window.innerHeight) - 2) {
+        if (appliedHeight !== -1) clear();
+        return;
+      }
+      if (height !== appliedHeight) {
+        appliedHeight = height;
+        // Inline wins: upstream's height is not !important.
+        root.style.setProperty("height", height + "px", "important");
+      }
+    }
+
+    function schedule() {
+      if (frame !== null) return;
+      // Coalesce: iOS fires resize and scroll together, repeatedly, through
+      // the whole keyboard animation.
+      frame = window.requestAnimationFrame(apply);
+    }
+
+    if (typeof vv.addEventListener === "function") {
+      vv.addEventListener("resize", schedule);
+      vv.addEventListener("scroll", schedule);
+    }
+    if (typeof standalone.addEventListener === "function") standalone.addEventListener("change", schedule);
+    if (typeof mq.addEventListener === "function") mq.addEventListener("change", schedule);
+    // A focus can scroll the document before any viewport event lands.
+    window.addEventListener("focusin", schedule, true);
+    window.addEventListener("orientationchange", schedule);
+    schedule();
+  }
+
+  if (!STRIP_ENABLED && !STATUS_ENABLED && !KEYBOARD_ENABLED) return;
 
   var REFRESH_MS = 20000;
   var RETRY_BASE_MS = 1000;
@@ -590,7 +674,13 @@ export function buildOverlayJs(config: OverlayConfig): string {
     unmountStatus();
   }
 
+  // The strip and the status bar are the only things that need session data.
+  // With both off, KEYBOARD_ENABLED alone got us here and there is nothing to
+  // poll or stream.
+  var WANTS_DATA = STRIP_ENABLED || STATUS_ENABLED;
+
   function sync() {
+    if (!WANTS_DATA) return;
     if (active()) start();
     else stop();
   }
@@ -611,10 +701,20 @@ export function buildOverlayJs(config: OverlayConfig): string {
     refresh();
   });
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", sync, { once: true });
-  } else {
+  function boot() {
+    // The keyboard fix is a layout repair, not a feature of the strip, so it
+    // runs whatever else is switched off -- and at every width, since it
+    // decides for itself when it applies.
+    if (KEYBOARD_ENABLED) {
+      try { setupKeyboardViewport(); } catch (err) { /* never throw into the host page */ }
+    }
     sync();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
   }
 })();
 `;

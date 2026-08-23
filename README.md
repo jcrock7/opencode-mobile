@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 507 tests with an enforced 85% coverage threshold
+- Test suite grown to 517 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -308,6 +308,23 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   not mostly empty -- scoped to direct icon children, so the progress spinner and
   the file-type badges keep the sizes they were given. All of it sits behind the
   phone breakpoint.
+- **Keeps the software keyboard from pushing the layout off screen.** Installed
+  to the Home Screen, OpenCode sets `#root { height: 100vh }` -- deliberately,
+  because WebKit excludes the safe-area insets from `dvh` in an installed app.
+  But `100vh` is the *layout* viewport, and iOS does not shrink that when the
+  keyboard opens: it shrinks only the visual viewport, then scrolls the document
+  to bring the focused field into view. Two symptoms, one cause -- that scroll
+  drags the top of the shell, safe-area padding and all, above the visible area
+  so the timeline runs under the clock; and the shell still believes it is full
+  height, so the composer sits adrift of the keyboard instead of resting on it.
+  The overlay pins the shell to `visualViewport.height` and undoes the scroll.
+  There is no CSS unit for this on iOS: `dvh` tracks browser chrome rather than
+  the keyboard, `env(keyboard-inset-*)` needs the VirtualKeyboard API that
+  WebKit does not implement, and the `interactive-widget=resizes-content` the
+  viewport meta already asks for is ignored. Only applies while installed and
+  only at phone widths -- in a browser tab Safari's own toolbar moves the visual
+  viewport for reasons that have nothing to do with the keyboard. Switch off
+  with `OPENCODE_MOBILE_OVERLAY_KEYBOARD=0`.
 - **Grows the composer's tap areas without growing its boxes.** The composer's
   control row is the one place a size floor does harm: it is a fixed 44px box
   holding the attach, model, variant and send controls on a single line, inside a
@@ -436,6 +453,7 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STATUS` | "Now running" status bar. `0` disables it | enabled |
+| `OPENCODE_MOBILE_OVERLAY_KEYBOARD` | Pin the shell to the visual viewport so the keyboard cannot push the layout off screen. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |
 | `OPENCODE_MOBILE_OVERLAY_DEBUG` | `1` shows a badge on the page proving the overlay is applied | off |
 | `OPENCODE_SERVER_PASSWORD` | **OpenCode's own** HTTP Basic password. Not read by this plugin, but see [Securing the tunnel](#securing-the-tunnel) | unset |

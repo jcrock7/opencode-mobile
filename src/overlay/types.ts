@@ -23,6 +23,18 @@ export interface OverlayConfig {
    * is doing at this moment, without scrolling to find the live tool row.
    */
   statusBar: boolean;
+  /**
+   * Pin the app shell to the visual viewport so the software keyboard does
+   * not push the layout off screen.
+   *
+   * Installed to the Home Screen, OpenCode sets `#root { height: 100vh }` --
+   * the LAYOUT viewport, which iOS does not shrink when the keyboard opens.
+   * It shrinks only the visual viewport and scrolls the document to reveal the
+   * focused field, which drags the shell up under the status bar and leaves
+   * the composer adrift above the keyboard. Only script can see that; there is
+   * no CSS unit for it on iOS.
+   */
+  keyboardViewport: boolean;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
   /**

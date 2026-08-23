@@ -20,6 +20,7 @@ const CONFIG: OverlayConfig = {
   enabled: true,
   sessionStrip: true,
   statusBar: true,
+  keyboardViewport: true,
   maxWidth: 767,
   debug: false,
 };
@@ -39,6 +40,12 @@ interface Harness {
   statusText(): string;
   statusState(): string;
   flush(): Promise<void>;
+  /** The fake visual viewport, so a test can open and close the keyboard. */
+  viewport: { height: number; offsetTop: number; emit(type: string): void };
+  /** Every window.scrollTo the script performed. */
+  scrollCalls: Array<[number, number]>;
+  /** The inline height the script pinned on #root, or "" if it pinned none. */
+  rootHeight(): string;
 }
 
 /** Stand-in EventSource whose instances are captured so tests can emit. */
@@ -64,10 +71,17 @@ async function harness(
     config?: Partial<OverlayConfig>;
     width?: number;
     withDock?: boolean;
+    standalone?: boolean;
+    viewportHeight?: number;
+    scrolledBy?: number;
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
-  const win = new Window({ url: "https://dev.example.org" + path, width: options.width ?? 390 });
+  const win = new Window({
+    url: "https://dev.example.org" + path,
+    width: options.width ?? 390,
+    height: 844,
+  });
   const doc = win.document as unknown as Document;
 
   // A minimal stand-in for the parts of OpenCode's DOM the script anchors to.
@@ -88,18 +102,52 @@ async function harness(
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   });
 
-  // happy-dom implements matchMedia but not the width predicate we need.
+  // happy-dom implements matchMedia but neither predicate we need.
   w.matchMedia = (query: string) => {
-    const m = /max-width:\s*(\d+)px/.exec(query);
-    const limit = m ? Number(m[1]) : 0;
+    let matches: boolean;
+    if (query.indexOf("display-mode") !== -1) {
+      matches = options.standalone === true;
+    } else {
+      const m = /max-width:\s*(\d+)px/.exec(query);
+      matches = (options.width ?? 390) <= (m ? Number(m[1]) : 0);
+    }
     return {
-      matches: (options.width ?? 390) <= limit,
+      matches,
       addEventListener() {},
       removeEventListener() {},
       addListener() {},
       removeListener() {},
     };
   };
+
+  // The keyboard fix reads visualViewport, which happy-dom does not provide,
+  // and resets the document scroll, which it does not track usefully either.
+  const vvListeners: Record<string, Array<() => void>> = {};
+  const viewport = {
+    height: options.viewportHeight ?? 844,
+    offsetTop: 0,
+    addEventListener(type: string, fn: () => void) {
+      (vvListeners[type] ||= []).push(fn);
+    },
+    removeEventListener() {},
+    emit(type: string) {
+      for (const fn of vvListeners[type] ?? []) fn();
+    },
+  };
+  w.visualViewport = viewport;
+
+  const scrollCalls: Array<[number, number]> = [];
+  Object.defineProperty(win, "scrollY", {
+    value: options.scrolledBy ?? 0,
+    writable: true,
+    configurable: true,
+  });
+  w.scrollTo = (x: number, y: number) => {
+    scrollCalls.push([x, y]);
+    Object.defineProperty(win, "scrollY", { value: y, writable: true, configurable: true });
+  };
+  // Deterministic frames, so a flush() is enough to see the coalesced write.
+  w.requestAnimationFrame = (fn: () => void) => setTimeout(fn, 0) as unknown as number;
 
   const js = buildOverlayJs({ ...CONFIG, ...options.config });
   win.eval(js);
@@ -126,6 +174,10 @@ async function harness(
       (statusEl()?.querySelector("[data-oc-status-text]") as HTMLElement | null)?.textContent ?? "",
     statusState: () => statusEl()?.getAttribute("data-oc-state") ?? "",
     flush,
+    viewport,
+    scrollCalls,
+    rootHeight: () =>
+      (doc.getElementById("root") as HTMLElement | null)?.style.getPropertyValue("height") ?? "",
   };
 }
 
@@ -385,5 +437,116 @@ describe("resilience", () => {
 
     await h.flush();
     expect(h.status()).not.toBeNull();
+  });
+});
+
+describe("the keyboard viewport", () => {
+  // Installed to the Home Screen, OpenCode sets `#root { height: 100vh }` --
+  // the layout viewport, which iOS does not shrink for the software keyboard.
+  // It shrinks only the visual viewport and scrolls the document to reveal the
+  // focused field, which drags the shell up under the status bar and leaves
+  // the composer adrift above the keyboard.
+
+  it("pins the shell to the visible area when the keyboard opens", async () => {
+    h = await harness({ standalone: true });
+    expect(h.rootHeight()).toBe("");
+
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.rootHeight()).toBe("460px");
+  });
+
+  it("marks the pin important, since upstream's own height is not", async () => {
+    h = await harness({ standalone: true });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    const root = h.document.getElementById("root") as HTMLElement;
+    expect(root.style.getPropertyPriority("height")).toBe("important");
+  });
+
+  it("hands the height back when the keyboard closes", async () => {
+    // Rather than leaving a pixel value pinned that the next rotation would
+    // make wrong.
+    h = await harness({ standalone: true });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+    expect(h.rootHeight()).toBe("460px");
+
+    h.viewport.height = 844;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.rootHeight()).toBe("");
+  });
+
+  it("undoes the document scroll iOS applied to reach the composer", async () => {
+    // This is the scroll that puts the timeline under the clock.
+    h = await harness({ standalone: true, scrolledBy: 120 });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.scrollCalls).toContainEqual([0, 0]);
+  });
+
+  it("leaves the height alone in a browser tab", async () => {
+    // Safari's own toolbar collapses on scroll, which moves the visual
+    // viewport for reasons that have nothing to do with the keyboard.
+    h = await harness({ standalone: false });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.rootHeight()).toBe("");
+    expect(h.scrollCalls).toHaveLength(0);
+  });
+
+  it("leaves the height alone on a desktop viewport", async () => {
+    h = await harness({ standalone: true, width: 1440 });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.rootHeight()).toBe("");
+  });
+
+  it("coalesces the burst of events the keyboard animation fires", async () => {
+    h = await harness({ standalone: true, scrolledBy: 120 });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    h.viewport.emit("scroll");
+    h.viewport.emit("resize");
+    await h.flush();
+
+    // One frame, one write -- not one per event.
+    expect(h.scrollCalls).toHaveLength(1);
+  });
+
+  it("does nothing when the fix is switched off", async () => {
+    h = await harness({ standalone: true, config: { keyboardViewport: false } });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.rootHeight()).toBe("");
+  });
+
+  it("still renders the strip and status bar with the fix off", async () => {
+    // The switch must not take the rest of the overlay with it.
+    h = await harness({
+      standalone: true,
+      statusMap: { ses_a: { type: "busy" } },
+      config: { keyboardViewport: false },
+    });
+    h.emit(toolPart());
+    await h.flush();
+
+    expect(h.status()!.hidden).toBe(false);
+    expect(h.statusText()).toBe("bash · npm test");
   });
 });
