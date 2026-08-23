@@ -164,98 +164,167 @@ async function postLatencies(port) {
 }
 
 /**
- * The other half of the question: how much does the rest of the chain add?
+ * The other half of the question: where in the chain does the time go?
  *
- * The loopback numbers below say what the proxy costs. They can say nothing
- * about Cloudflare, cloudflared or the radio -- and that is where the time goes
- * if the proxy is fast and the phone still feels slow. So when a public URL is
- * given, measure the same things through it, which turns "it lags" into a
- * number with an owner.
+ * The loopback numbers below say what this proxy costs. They can say nothing
+ * about OpenCode itself, cloudflared, Cloudflare or the radio -- and that is
+ * where the time goes if the proxy is fast and the phone still feels slow.
  *
- *   LATENCY_URL=https://your.tunnel npm run latency
+ * So probe the chain a leg at a time, innermost first:
+ *
+ *   OpenCode        127.0.0.1:<OPENCODE_PORT>    the agent's own server
+ *   plugin          127.0.0.1:<+1>               this reverse proxy in front of it
+ *   tunnel          LATENCY_URL                  ...through Cloudflare
+ *
+ * Each leg contains the ones before it, so the difference between two adjacent
+ * legs is what the outer one costs. A leg that fails tells you more than a leg
+ * that is slow, which is why the status code is reported first and the timings
+ * are withheld unless the request actually succeeded: a 530 answered in 50ms is
+ * Cloudflare saying it could not reach your origin, and printing "50ms" next to
+ * it invites reading a broken path as a fast one.
  */
-async function measureLive(base, password) {
+const STATUS_MEANING = {
+  401: "authentication required -- export OPENCODE_SERVER_PASSWORD in this shell",
+  403: "forbidden -- an edge policy (Cloudflare Access?) is refusing a non-browser client",
+  404: "no such route -- is this really an OpenCode server?",
+  502: "bad gateway -- the plugin could not reach OpenCode",
+  530: "Cloudflare could not reach your origin: the tunnel is down, or the plugin " +
+    "never started it (`opencode serve` loads no plugins until a request arrives -- use `npm run serve`)",
+};
+
+function probeClient(base) {
   const target = new URL(base);
-  const client = target.protocol === "https:" ? https : http;
-  const user = process.env.OPENCODE_SERVER_USERNAME || "opencode";
-  const auth = password
-    ? { authorization: "Basic " + Buffer.from(user + ":" + password).toString("base64") }
-    : {};
-
-  const get = (pathname) =>
-    new Promise((resolve, reject) => {
-      const started = Date.now();
-      const request = client.request(
-        {
-          host: target.hostname,
-          port: target.port || undefined,
-          path: pathname,
-          method: "GET",
-          headers: { accept: "application/json", ...auth },
-        },
-        (res) => {
-          res.resume();
-          res.on("end", () => resolve({ status: res.statusCode, total: Date.now() - started }));
-        },
-      );
-      request.on("error", reject);
-      request.setTimeout(15000, () => request.destroy(new Error("timed out")));
-      request.end();
-    });
-
-  // Time to the first event on the stream: the number that decides whether a
-  // question reaches the phone promptly.
-  const firstEvent = () =>
-    new Promise((resolve, reject) => {
-      const started = Date.now();
-      let settled = false;
-      const request = client.request(
-        {
-          host: target.hostname,
-          port: target.port || undefined,
-          path: "/event",
-          method: "GET",
-          headers: { accept: "text/event-stream", ...auth },
-        },
-        (res) => {
-          res.on("data", () => {
-            if (settled) return;
-            settled = true;
-            resolve({ status: res.statusCode, firstEvent: Date.now() - started });
-            request.destroy();
-          });
-          res.on("end", () => {
-            if (!settled) resolve({ status: res.statusCode, firstEvent: null });
-          });
-        },
-      );
-      request.on("error", (error) => {
-        if (settled) return;
-        reject(error);
-      });
-      request.setTimeout(20000, () => request.destroy(new Error("timed out")));
-      request.end();
-    });
-
-  const gets = [];
-  for (let i = 0; i < 8; i++) gets.push((await get("/session")).total);
-  return { gets, stream: await firstEvent() };
+  return { target, client: target.protocol === "https:" ? https : http };
 }
 
-if (process.env.LATENCY_URL) {
-  try {
-    const live = await measureLive(process.env.LATENCY_URL, process.env.OPENCODE_SERVER_PASSWORD);
-    const r = report("GET /session", live.gets);
-    const first = live.stream.firstEvent;
-    console.log("through " + process.env.LATENCY_URL);
-    console.log("  GET /session   p50 " + r.p50 + "ms  p95 " + r.p95 + "ms  max " + r.max + "ms  (n=" + r.n + ")");
-    console.log("  first /event   " + (first === null ? "nothing before the stream closed" : first + "ms") +
-      "  (HTTP " + live.stream.status + ")");
-    console.log("");
-  } catch (error) {
-    console.log("through " + process.env.LATENCY_URL + ": " + error.message);
-    console.log("(set OPENCODE_SERVER_PASSWORD if the server asks for one)\n");
+function authHeaders(password) {
+  if (!password) return {};
+  const user = process.env.OPENCODE_SERVER_USERNAME || "opencode";
+  return { authorization: "Basic " + Buffer.from(user + ":" + password).toString("base64") };
+}
+
+function getOnce(base, pathname, password) {
+  const { target, client } = probeClient(base);
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const request = client.request(
+      {
+        host: target.hostname,
+        port: target.port || undefined,
+        path: pathname,
+        method: "GET",
+        headers: { accept: "application/json", ...authHeaders(password) },
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode, ms: Date.now() - started }));
+      },
+    );
+    request.on("error", (error) => resolve({ error: error.message }));
+    request.setTimeout(15000, () => request.destroy(new Error("timed out after 15s")));
+    request.end();
+  });
+}
+
+/** Time to the first byte on the event stream -- the number a question waits on. */
+function firstEvent(base, password) {
+  const { target, client } = probeClient(base);
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const request = client.request(
+      {
+        host: target.hostname,
+        port: target.port || undefined,
+        path: "/event",
+        method: "GET",
+        headers: { accept: "text/event-stream", ...authHeaders(password) },
+      },
+      (res) => {
+        res.on("data", () => {
+          done({ status: res.statusCode, ms: Date.now() - started });
+          request.destroy();
+        });
+        res.on("end", () => done({ status: res.statusCode, ms: null }));
+      },
+    );
+    request.on("error", (error) => done({ error: error.message }));
+    request.setTimeout(20000, () => request.destroy(new Error("timed out after 20s")));
+    request.end();
+  });
+}
+
+async function probeLeg(label, base, password) {
+  const gets = [];
+  let status = null;
+  let failure = null;
+  for (let i = 0; i < 6; i++) {
+    const result = await getOnce(base, "/session", password);
+    if (result.error) {
+      failure = result.error;
+      break;
+    }
+    status = result.status;
+    gets.push(result.ms);
   }
+  const stream = failure ? null : await firstEvent(base, password);
+  return { label, base, gets, status, failure, stream };
+}
+
+function printLeg(leg) {
+  console.log(`${leg.label.padEnd(9)} ${leg.base}`);
+  if (leg.failure) {
+    console.log(`          unreachable: ${leg.failure}`);
+    return false;
+  }
+  const ok = leg.status !== null && leg.status >= 200 && leg.status < 300;
+  if (!ok) {
+    // Deliberately no timings. A fast error is not a fast path.
+    console.log(`          HTTP ${leg.status} on GET /session -- ${STATUS_MEANING[leg.status] ?? "not a success"}`);
+    console.log(`          timings withheld: nothing here measured a working request`);
+    return false;
+  }
+  const r = report(leg.label, leg.gets);
+  console.log(`          GET /session  p50 ${r.p50}ms  p95 ${r.p95}ms  max ${r.max}ms  (n=${r.n})`);
+  const s = leg.stream;
+  if (!s || s.error) {
+    console.log(`          /event        unreachable${s?.error ? `: ${s.error}` : ""}`);
+    return false;
+  }
+  const streamOk = s.status >= 200 && s.status < 300;
+  if (!streamOk) {
+    console.log(`          /event        HTTP ${s.status} -- ${STATUS_MEANING[s.status] ?? "not a success"}`);
+    return false;
+  }
+  console.log(
+    `          /event        ${s.ms === null ? "connected, but no event arrived before the stream closed" : `first byte in ${s.ms}ms`}`,
+  );
+  return true;
+}
+
+const openCodePort = Number(process.env.OPENCODE_PORT) || 4096;
+const password = process.env.OPENCODE_SERVER_PASSWORD;
+const legs = [
+  ["OpenCode", `http://127.0.0.1:${openCodePort}`],
+  ["plugin", `http://127.0.0.1:${openCodePort + 1}`],
+];
+if (process.env.LATENCY_URL) legs.push(["tunnel", process.env.LATENCY_URL]);
+
+console.log("the chain, innermost leg first. each leg contains the ones above it.\n");
+let allOk = true;
+for (const [label, base] of legs) {
+  const leg = await probeLeg(label, base, password);
+  if (!printLeg(leg)) allOk = false;
+  console.log("");
+}
+if (!allOk) {
+  console.log("At least one leg did not answer a working request, so the numbers above");
+  console.log("cannot be read as latency. Fix the failing leg, then re-run.\n");
 }
 
 console.log(`upstream on ${upstreamPort}, proxy on ${proxyPort}`);

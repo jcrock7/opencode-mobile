@@ -550,11 +550,24 @@ signals.forEach((signal) => {
     handshake.
 50. **Measure Before Tuning A Proxy**: `npm run latency` drives a fake OpenCode
     directly and through the real `forwardRequest` and prints the delta (0ms at
-    p95). With `LATENCY_URL` it measures the public URL too. Node's defaults
-    already give `noDelay: true` both sides and `maxSockets: Infinity`, so Nagle
-    and socket starvation are not the answer -- check before "fixing" either.
-    `keepAliveTimeout` IS worth raising (5s default, 75s now) because a pooling
-    intermediary keeps origin sockets longer than that.
+    p95). Node's defaults already give `noDelay: true` both sides and
+    `maxSockets: Infinity`, so Nagle and socket starvation are not the answer --
+    check before "fixing" either. `keepAliveTimeout` IS worth raising (5s
+    default, 75s now) because a pooling intermediary keeps origin sockets longer
+    than that.
+51. **Never Print A Timing For A Request That Failed**: the first version of the
+    latency script reported `first /event 65ms (HTTP 530)` with a tidy
+    `p50 50ms` beside it -- and 50ms was Cloudflare answering its own error
+    page. A fast error is not a fast path. Report the status first, withhold the
+    timings unless it was 2xx, and say what each code means, because each has a
+    different fix (401 password, 403 edge policy, 502 plugin-to-OpenCode, 530
+    Cloudflare-to-origin). A tool that presents a broken path as a fast one is
+    worse than no tool.
+52. **Probe A Chain One Leg At A Time, Innermost First**: OpenCode on
+    `OPENCODE_PORT`, the plugin on `+1`, then the public URL. Each leg contains
+    the ones before it, so the difference between adjacent legs is what the
+    outer one costs -- and a leg that fails localises the fault without any
+    arithmetic.
 
 ## Configuration
 

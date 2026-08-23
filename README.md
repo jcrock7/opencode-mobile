@@ -10,7 +10,9 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   OpenCode and injects a mobile stylesheet plus a session switcher into its web UI.
   See [Mobile web overlay](#mobile-web-overlay).
 - **`npm run latency`** measures what the proxy itself adds (0ms at p95 here),
-  and with `LATENCY_URL` measures the rest of the chain too. See
+  and probes the chain a leg at a time -- OpenCode, then the plugin, then the
+  tunnel -- reporting each leg's status before its timings and withholding the
+  timings when the request did not succeed. See
   [When it feels slow](#when-it-feels-slow).
 - Fixed: the proxy relayed hop-by-hop headers (`connection`, `transfer-encoding`
   and friends) verbatim in both directions, which is harmless on loopback and
@@ -573,22 +575,54 @@ bubble shipped.
 
 ```bash
 npm run latency                                    # what the proxy itself costs
-LATENCY_URL=https://your.tunnel npm run latency    # ...and what the rest of the chain costs
+LATENCY_URL=https://your.tunnel npm run latency    # ...and where the chain spends its time
 ```
 
-"It lags" has three possible owners -- the client app, the tunnel, or this
-plugin -- and only one of them is ours. `scripts/latency.mjs` stands a fake
-OpenCode up on loopback, drives its event stream and a reply POST both directly
-and through the real `forwardRequest`, and prints the difference. On this
-machine that difference is **0ms at p95 for both**, so steady-state proxying is
-not where time goes.
+"It lags" has several possible owners -- the client app, Cloudflare, cloudflared,
+OpenCode, or this plugin -- and only one of them is ours. So the script does two
+separate things.
 
-Give it `LATENCY_URL` and it measures the same things through your public URL as
-well, which splits the chain into a number you can act on: if `GET /session` is
-40ms and the first `/event` arrives in 60ms, the plugin and the tunnel are fine
-and the delay is in the client or in what iOS is doing with it (ActivityKit
-throttles Live Activity updates, for one). If those numbers are seconds, it is
-the tunnel or the network.
+**What the proxy costs.** A fake OpenCode on loopback, with its event stream and
+a reply POST driven both directly and through the real `forwardRequest`. The
+difference is the proxy's price: **0ms at p95 for both**, so steady-state
+proxying is not where time goes.
+
+**Where the chain spends its time.** Probed a leg at a time, innermost first,
+because each leg contains the ones before it -- so the difference between two
+adjacent legs is what the outer one costs:
+
+```
+OpenCode  http://127.0.0.1:4096
+          GET /session  p50 7ms  p95 18ms  max 18ms  (n=6)
+          /event        first byte in 7ms
+
+plugin    http://127.0.0.1:4097
+          GET /session  p50 22ms  p95 25ms  max 25ms  (n=6)
+          /event        first byte in 22ms
+
+tunnel    https://dev.crockers.org
+          HTTP 530 on GET /session -- Cloudflare could not reach your origin ...
+          timings withheld: nothing here measured a working request
+```
+
+**A failing leg tells you more than a slow one**, so the status code is reported
+first and the timings are withheld unless the request actually succeeded. That
+is not a nicety: the first version of this script printed `first /event 65ms
+(HTTP 530)` and a tidy `p50 50ms` beside it, and 50ms was Cloudflare answering
+its own error page. A fast error is not a fast path, and a tool that presents one
+as the other is worse than no tool.
+
+The codes it explains, because each has a different fix: `401` (password not
+exported into this shell), `403` (an edge policy refusing a non-browser client --
+Cloudflare Access does this), `502` (the plugin cannot reach OpenCode), `530`
+(Cloudflare cannot reach your origin: the tunnel is down, or the plugin never
+started it -- `opencode serve` loads no plugins until a request arrives, which is
+what `npm run serve` is for).
+
+Once all three legs answer: tens of milliseconds end to end means the path is
+healthy and the delay is in the client or in what iOS is doing with it
+(ActivityKit deliberately throttles Live Activity updates). Seconds means the
+leg where the jump appears.
 
 Two things the loopback measurement cannot see, both fixed rather than tuned
 blind, because both only misbehave through an intermediary:
