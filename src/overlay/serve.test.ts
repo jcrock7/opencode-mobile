@@ -4,7 +4,7 @@ import { handleOverlayAsset, getOverlayAsset, overlayAssets, clearAssetCache } f
 import { OVERLAY_CSS_PATH, OVERLAY_JS_PATH, loadOverlayConfig } from "./config";
 import type { OverlayConfig } from "./types";
 
-const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, maxWidth: 767, debug: false };
+const CONFIG: OverlayConfig = { enabled: true, sessionStrip: true, statusBar: true, keyboardViewport: true, bubbles: true, changesButton: true, maxWidth: 767, debug: false };
 
 /** Remove every balanced @media block, leaving only unconditional rules. */
 function stripMediaBlocks(css: string): string {
@@ -314,6 +314,33 @@ describe("overlay assets", () => {
       expect(css).toContain('[data-size="x-large"]');
     });
 
+    it("hides the Session / Changes tab bar without removing it", () => {
+      // display: none on the list keeps the triggers in the DOM and clickable,
+      // which is the whole mechanism -- the script drives them.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain(
+        '[data-slot="tabs-list"]:has([data-value="session"]):has([data-value="changes"])',
+      );
+      // Scoped by the pair: the settings dialog and the file tabs are lists too.
+      expect(css).not.toMatch(/\[data-slot="tabs-list"\]\s*\{[^}]*display: none/);
+    });
+
+    it("styles the changes button as a 44px target with a count badge", () => {
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toMatch(/\[data-oc-changes\]\s*\{[^}]*min-height: 44px !important/);
+      expect(css).toContain("[data-oc-changes] > [data-oc-changes-count]");
+      expect(css).toMatch(
+        /\[data-oc-changes-count\]\s*\{[^}]*pointer-events: none !important/,
+      );
+    });
+
+    it("omits the tab-bar rules when the changes button is off", () => {
+      // Hiding the bar with no replacement would strand the diff view.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, { ...CONFIG, changesButton: false })!.body;
+      expect(css).not.toContain('[data-value="changes"]');
+      expect(css).not.toContain("[data-oc-changes]");
+    });
+
     it("collapses the bottom safe-area inset while the keyboard is open", () => {
       // iOS never zeroes env(safe-area-inset-bottom) for the keyboard, so the
       // layout keeps reserving a strip for a home indicator the keyboard is
@@ -497,6 +524,51 @@ describe("overlay assets", () => {
       for (const state of ["busy", "attention", "error", "idle"]) {
         expect(css).toContain(`[data-oc-state="${state}"]`);
       }
+    });
+  });
+
+  describe("the script's template escaping", () => {
+    // The script is written inside a template literal, and the two kinds of
+    // backslash behave differently there:
+    //
+    //   valid escape   (\u, \n, \\)  resolves at build time. The emitted script
+    //                                carries the character, and works.
+    //   invalid escape (\d, \s, \w)  silently loses its backslash.
+    //
+    // The second shipped once: the changed-file badge read /\d+/ in the source,
+    // emitted /d+/, and matched the "d" in "changed", so the badge said "d".
+    // Anything the browser must see as a backslash has to be doubled.
+    //
+    // These read the built asset rather than the source, which is the only way
+    // to see what the browser actually gets.
+
+    it("emits a real digit class in the changed-file count", () => {
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      expect(js).toContain("/\\d+/");
+      expect(js).not.toMatch(/\/d\+\//);
+    });
+
+    it("emits no regex literal that lost its escape", () => {
+      // A character class or escape that survived as a bare letter.
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      for (const bad of ["/d+/", "/w+/", "/s+/", "/D+/", "/W+/", "/S+/"]) {
+        expect(js).not.toContain(bad);
+      }
+    });
+
+    it("resolves a valid escape at build time, which is harmless", () => {
+      // The rule is narrower than "double every backslash". A VALID template
+      // escape -- \u, \n, \\ -- resolves when the module is evaluated, so the
+      // emitted script carries the character itself and works. Only an INVALID
+      // one silently loses its backslash, which is what bit the digit class.
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      expect(js).toContain("\u00b7");
+    });
+
+    it("emits a valid script", () => {
+      // The cheapest possible check that the whole template still parses.
+      const js = getOverlayAsset(OVERLAY_JS_PATH, CONFIG)!.body;
+      expect(() => new Function(js)).not.toThrow();
     });
   });
 

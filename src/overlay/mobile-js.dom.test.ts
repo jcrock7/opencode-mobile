@@ -22,6 +22,7 @@ const CONFIG: OverlayConfig = {
   statusBar: true,
   keyboardViewport: true,
   bubbles: true,
+  changesButton: true,
   maxWidth: 767,
   debug: false,
 };
@@ -47,6 +48,10 @@ interface Harness {
   scrollCalls: Array<[number, number]>;
   /** The inline height the script pinned on #root, or "" if it pinned none. */
   rootHeight(): string;
+  /** The injected titlebar button, if it mounted. */
+  changesButton(): HTMLElement | null;
+  /** One of upstream's own tab triggers. */
+  trigger(value: string): HTMLElement | null;
 }
 
 /** Stand-in EventSource whose instances are captured so tests can emit. */
@@ -75,6 +80,8 @@ async function harness(
     standalone?: boolean;
     viewportHeight?: number;
     scrolledBy?: number;
+    withTabs?: boolean;
+    changedFiles?: number;
   } = {},
 ): Promise<Harness> {
   const path = options.path ?? "/L3RtcC9wcm9q/session/ses_a";
@@ -86,11 +93,42 @@ async function harness(
   const doc = win.document as unknown as Document;
 
   // A minimal stand-in for the parts of OpenCode's DOM the script anchors to.
+  // The tab bar mirrors upstream's shape: a list of trigger wrappers, each
+  // wrapping a Kobalte trigger that carries data-value and aria-selected.
+  const tabs =
+    options.withTabs === false
+      ? ""
+      : `
+      <div data-component="tabs">
+        <div data-slot="tabs-list">
+          <div data-slot="tabs-trigger-wrapper" data-value="session">
+            <button data-slot="tabs-trigger" data-value="session" aria-selected="true">Session</button>
+          </div>
+          <div data-slot="tabs-trigger-wrapper" data-value="changes">
+            <button data-slot="tabs-trigger" data-value="changes" aria-selected="false">${
+              options.changedFiles === undefined ? "Changes" : `${options.changedFiles} files changed`
+            }</button>
+          </div>
+        </div>
+      </div>`;
+
   doc.body.innerHTML = `
     <div id="root">
+      <header></header>
+      ${tabs}
       <div data-component="session-turn"><div data-slot="session-turn-content"></div></div>
       ${options.withDock === false ? "" : '<div data-component="session-prompt-dock"></div>'}
     </div>`;
+
+  // Upstream's triggers are a real tab control: clicking one selects it and
+  // deselects its sibling. Without that the toggle cannot be tested at all.
+  for (const el of Array.from(doc.querySelectorAll('[data-slot="tabs-trigger"]'))) {
+    el.addEventListener("click", () => {
+      for (const other of Array.from(doc.querySelectorAll('[data-slot="tabs-trigger"]'))) {
+        other.setAttribute("aria-selected", other === el ? "true" : "false");
+      }
+    });
+  }
 
   FakeEventSource.instances = [];
   const w = win as unknown as Record<string, unknown>;
@@ -179,6 +217,9 @@ async function harness(
     scrollCalls,
     rootHeight: () =>
       (doc.getElementById("root") as HTMLElement | null)?.style.getPropertyValue("height") ?? "",
+    changesButton: () => doc.querySelector("[data-oc-changes]") as HTMLElement | null,
+    trigger: (value: string) =>
+      doc.querySelector(`[data-slot="tabs-trigger"][data-value="${value}"]`) as HTMLElement | null,
   };
 }
 
@@ -758,5 +799,106 @@ describe("sub-agent sessions", () => {
     });
 
     expect(h.statusText()).toBe("Working");
+  });
+});
+
+describe("the changes button", () => {
+  // Replaces upstream's Session / Changes tab bar, which costs a permanent row
+  // above the timeline. It drives upstream's own triggers, because `mobileTab`
+  // is local component state in session.tsx rather than a route.
+
+  it("mounts into the titlebar", async () => {
+    h = await harness();
+    const button = h.changesButton();
+    expect(button).not.toBeNull();
+    expect(button!.parentElement?.tagName.toLowerCase()).toBe("header");
+  });
+
+  it("shows the changes panel by clicking upstream's own trigger", async () => {
+    h = await harness();
+    h.changesButton()!.click();
+
+    expect(h.trigger("changes")!.getAttribute("aria-selected")).toBe("true");
+    expect(h.trigger("session")!.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("becomes a close control once the changes panel is showing", async () => {
+    h = await harness();
+    h.changesButton()!.click();
+    await h.flush();
+
+    const button = h.changesButton()!;
+    expect(button.getAttribute("data-oc-changes")).toBe("open");
+    expect(button.getAttribute("aria-label")).toBe("Back to the session");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("returns to the session on the second tap", async () => {
+    h = await harness();
+    h.changesButton()!.click();
+    await h.flush();
+    h.changesButton()!.click();
+    await h.flush();
+
+    expect(h.trigger("session")!.getAttribute("aria-selected")).toBe("true");
+    expect(h.changesButton()!.getAttribute("data-oc-changes")).toBe("closed");
+  });
+
+  it("follows the tab changing without us", async () => {
+    // Opening a review comment switches the tab upstream; the button must not
+    // then claim the session is showing.
+    h = await harness();
+    h.trigger("changes")!.click();
+    await h.flush();
+
+    expect(h.changesButton()!.getAttribute("data-oc-changes")).toBe("open");
+  });
+
+  it("badges the changed-file count from the tab's own label", async () => {
+    // Reading the digits survives translation; matching the words would not.
+    h = await harness({ changedFiles: 7 });
+    const badge = h.changesButton()!.querySelector("[data-oc-changes-count]");
+    expect(badge?.textContent).toBe("7");
+  });
+
+  it("shows no badge when nothing has changed", async () => {
+    h = await harness();
+    expect(h.changesButton()!.querySelector("[data-oc-changes-count]")).toBeNull();
+  });
+
+  it("drops the badge while the changes panel is open", async () => {
+    // The count is a reason to look; it is noise once you are looking.
+    h = await harness({ changedFiles: 3 });
+    h.changesButton()!.click();
+    await h.flush();
+
+    expect(h.changesButton()!.querySelector("[data-oc-changes-count]")).toBeNull();
+  });
+
+  it("does not mount where upstream renders no tab bar", async () => {
+    // A desktop width, or no session open: there is nothing to toggle.
+    h = await harness({ withTabs: false });
+    expect(h.changesButton()).toBeNull();
+  });
+
+  it("does not mount on a desktop viewport", async () => {
+    h = await harness({ width: 1440 });
+    expect(h.changesButton()).toBeNull();
+  });
+
+  it("does not mount when switched off", async () => {
+    h = await harness({ config: { changesButton: false } });
+    expect(h.changesButton()).toBeNull();
+  });
+
+  it("mounts without the strip or status bar, and polls nothing", async () => {
+    // The button reads the DOM only, so it must survive both being disabled --
+    // and must not open an event stream to do it.
+    h = await harness({
+      config: { sessionStrip: false, statusBar: false, changesButton: true },
+    });
+
+    expect(h.changesButton()).not.toBeNull();
+    expect(FakeEventSource.instances).toHaveLength(0);
   });
 });

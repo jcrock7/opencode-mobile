@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 652 tests with an enforced 85% coverage threshold
+- Test suite grown to 672 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -363,6 +363,24 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   frame carries its own `pt-3` between consecutive assistant parts, so the
   borders butt into a continuous line -- and normal turns are separated by a
   `TurnGap` row, which has no border, so the rail breaks exactly at the turn.
+- **Trades the Session / Changes tab bar for a titlebar button.** That bar is a
+  permanent row above the timeline -- 44px once its touch targets are honoured --
+  spent on a control used occasionally, on the axis a phone has least of. The
+  overlay hides it and puts both actions on one button in the titlebar: a
+  GitHub mark to open the diff view, badged with the changed-file count, and an
+  ✕ in the same place to come back. Off with
+  `OPENCODE_MOBILE_OVERLAY_CHANGES=0`, which restores the bar.
+
+  The button clicks upstream's own tab triggers rather than reimplementing the
+  switch, and that is deliberate: `mobileTab` is local component state in
+  `session.tsx`, not a route or a query param, so the triggers are the only
+  handle on it -- and driving the real control leaves the panel, its scroll
+  position and its keyboard handling entirely upstream's. The bar is hidden with
+  `display: none` on the list, which keeps those triggers in the DOM and
+  clickable. The count is read as digits out of the tab's own label, so it
+  survives translation where matching the words would not, and the button
+  follows the tab changing by other means (opening a review comment switches
+  it) through a `MutationObserver` on the triggers' selected state.
 - **Surfaces sub-agent work.** Child sessions are what a sub-agent runs in, and
   they used to show nowhere at all on a phone: not in the strip (excluded by
   design) and not in notifications (suppressed by design). The status bar was
@@ -676,6 +694,7 @@ are all covered by the same credential.
 | `OPENCODE_MOBILE_OVERLAY` | Mobile web overlay. `0` makes the plugin a transparent proxy | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STRIP` | Session switcher strip. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_STATUS` | "Now running" status bar. `0` disables it | enabled |
+| `OPENCODE_MOBILE_OVERLAY_CHANGES` | Replace the Session / Changes tab bar with a button in the titlebar. `0` restores the tab bar | enabled |
 | `OPENCODE_MOBILE_OVERLAY_BUBBLES` | Three visual tiers in the transcript: your message as a bubble, the response railed, tool rows demoted. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_KEYBOARD` | Pin the shell to the visual viewport so the keyboard cannot push the layout off screen. `0` disables it | enabled |
 | `OPENCODE_MOBILE_OVERLAY_MAX_WIDTH` | Viewport width (px) at or below which the mobile rules apply | `767` |

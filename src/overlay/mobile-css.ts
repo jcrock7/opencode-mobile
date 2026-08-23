@@ -92,6 +92,67 @@ export function buildOverlayCss(config: OverlayConfig): string {
 `
     : "";
 
+  /* ---- changes button -------------------------------------------------------
+     Replaces the Session / Changes tab bar. That bar is a permanent row above
+     the timeline -- 44px once its touch targets are honoured -- spent on a
+     control used occasionally, on the axis a phone has least of.
+
+     The bar is hidden rather than removed: overlay.js drives its real triggers
+     with .click(), because `mobileTab` is local component state in session.tsx
+     rather than a route, so the triggers are the only handle on it. Hiding with
+     `visibility` would still reserve the row; `display: none` on the list keeps
+     the triggers in the DOM and clickable, which is what matters. */
+  const changes = config.changesButton
+    ? `
+@media (max-width: ${config.maxWidth}px) {
+  /* Scoped by the pair of values, which only the mobile session/changes bar
+     has -- the settings dialog and the file tabs are tab lists too. */
+  [data-slot="tabs-list"]:has([data-value="session"]):has([data-value="changes"]) {
+    display: none !important;
+  }
+
+  [data-oc-changes] {
+    flex: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: relative !important;
+    margin-left: auto !important;
+    margin-right: 6px !important;
+    align-self: center !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    background: transparent !important;
+    color: var(--v2-icon-icon-muted, currentColor) !important;
+    -webkit-tap-highlight-color: transparent !important;
+  }
+  [data-oc-changes][data-oc-changes="open"] {
+    background: var(--v2-background-bg-layer-02, rgba(127, 127, 127, 0.16)) !important;
+    color: var(--v2-text-text-base, currentColor) !important;
+  }
+
+  /* The changed-file count, when the tab label carried one. */
+  [data-oc-changes] > [data-oc-changes-count] {
+    position: absolute !important;
+    top: 4px !important;
+    right: 2px !important;
+    min-width: 15px !important;
+    padding: 0 3px !important;
+    border-radius: 8px !important;
+    background: #0c6e68 !important;
+    color: #ffffff !important;
+    font: 600 10px/15px ui-monospace, "SF Mono", Menlo, monospace !important;
+    font-variant-numeric: tabular-nums !important;
+    text-align: center !important;
+    pointer-events: none !important;
+  }
+}
+`
+    : "";
+
   /* ---- settings dialog ------------------------------------------------------
      Built for a desktop and painful on a phone. Three measured causes, all in
      upstream's own CSS:
@@ -718,5 +779,5 @@ export function buildOverlayCss(config: OverlayConfig): string {
   [data-oc-chip][data-oc-state="attention"] { color: #e0925d; background: rgba(224, 146, 93, 0.16); }
   [data-oc-chip][data-oc-state="error"]     { color: #e4695d; background: rgba(228, 105, 93, 0.16); }
 }
-${bubbles}${settings}${debugBadge}`;
+${bubbles}${changes}${settings}${debugBadge}`;
 }

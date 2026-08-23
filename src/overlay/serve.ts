@@ -31,6 +31,7 @@ function cacheKey(config: OverlayConfig): string {
     config.statusBar ? 1 : 0,
     config.keyboardViewport ? 1 : 0,
     config.bubbles ? 1 : 0,
+    config.changesButton ? 1 : 0,
     config.debug ? 1 : 0,
   ].join(":");
 }

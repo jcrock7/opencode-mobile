@@ -29,6 +29,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var STRIP_ENABLED = ${config.sessionStrip ? "true" : "false"};
   var STATUS_ENABLED = ${config.statusBar ? "true" : "false"};
   var KEYBOARD_ENABLED = ${config.keyboardViewport ? "true" : "false"};
+  var CHANGES_ENABLED = ${config.changesButton ? "true" : "false"};
   var DEBUG = ${config.debug ? "true" : "false"};
   if (typeof window === "undefined" || !window.document) return;
 
@@ -164,7 +165,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     schedule();
   }
 
-  if (!STRIP_ENABLED && !STATUS_ENABLED && !KEYBOARD_ENABLED) return;
+  if (!STRIP_ENABLED && !STATUS_ENABLED && !KEYBOARD_ENABLED && !CHANGES_ENABLED) return;
 
   var REFRESH_MS = 20000;
   var RETRY_BASE_MS = 1000;
@@ -181,6 +182,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
 
   var strip = null;
   var statusEl = null;
+  var changesBtn = null;
+  var changesWatch = null;
   var statusTick = null;
   // sessionId -> { tool, title, startedAt } for whatever that session is
   // running right now. Keyed by session rather than held as one global,
@@ -588,6 +591,120 @@ export function buildOverlayJs(config: OverlayConfig): string {
     mounted = false;
   }
 
+  /* ---------- changes button ----------
+
+     Upstream switches between the timeline and the diff view with a
+     two-segment tab bar above the timeline (session.tsx, mobileTabs). On a
+     phone that is a permanent row of chrome spent on an occasional control.
+     The stylesheet hides it; this puts the same two actions on one button in
+     the titlebar, which is already on screen.
+
+     It drives upstream's own trigger with .click() rather than reimplementing
+     the switch. That is not laziness: 'mobileTab' is local component state in
+     session.tsx, not a route or a query param, so there is nothing else to
+     drive it with -- and clicking the real control leaves the panel, its
+     scroll state and its keyboard handling entirely upstream's. */
+
+  var GH_ICON =
+    '<svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor">' +
+    '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38' +
+    ' 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53' +
+    '.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-2.91-.88-2.91-2.79' +
+    ' 0-.85.3-1.55.8-2.1-.08-.2-.35-1 .08-2.08 0 0 .66-.21 2.16.8.63-.18 1.3-.27 1.97-.27.67 0 1.34.09' +
+    ' 1.97.27 1.5-1.02 2.16-.8 2.16-.8.43 1.08.16 1.88.08 2.08.5.55.8 1.25.8 2.1 0 1.92-1.13 2.59-2.92' +
+    ' 2.79.34.3.62.87.62 1.75 0 1.03-.01 1.85-.01 2.11 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>' +
+    "</svg>";
+
+  var CLOSE_ICON =
+    '<svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="none"' +
+    ' stroke="currentColor" stroke-width="1.75" stroke-linecap="round">' +
+    '<path d="M4 4l8 8M12 4l-8 8"/>' +
+    "</svg>";
+
+  function tabTrigger(value) {
+    return document.querySelector('[data-slot="tabs-trigger"][data-value="' + value + '"]');
+  }
+
+  /** Kobalte marks the active trigger both ways; accept either. */
+  function tabSelected(el) {
+    if (!el) return false;
+    return el.getAttribute("aria-selected") === "true" || el.hasAttribute("data-selected");
+  }
+
+  function renderChanges() {
+    if (!changesBtn) return;
+    var changes = tabTrigger("changes");
+    if (!changes) {
+      // No tab bar on this screen: no session open, or a desktop width where
+      // upstream renders the panels side by side instead.
+      unmountChanges();
+      return;
+    }
+
+    var showing = tabSelected(changes);
+    changesBtn.setAttribute("data-oc-changes", showing ? "open" : "closed");
+    changesBtn.setAttribute("aria-label", showing ? "Back to the session" : "Show changes");
+    changesBtn.setAttribute("aria-pressed", showing ? "true" : "false");
+    changesBtn.title = showing ? "Back to the session" : "Show changes";
+    changesBtn.innerHTML = showing ? CLOSE_ICON : GH_ICON;
+
+    // The tab label carries the changed-file count when there is one. Reading
+    // the digits out of it survives translation, where matching the words
+    // would not.
+    var count = /\\d+/.exec(changes.textContent || "");
+    if (!showing && count) {
+      var badge = document.createElement("span");
+      badge.setAttribute("data-oc-changes-count", "");
+      badge.textContent = count[0];
+      changesBtn.appendChild(badge);
+    }
+  }
+
+  function mountChanges() {
+    if (!CHANGES_ENABLED) return;
+    if (changesBtn && changesBtn.isConnected) {
+      renderChanges();
+      return;
+    }
+    // The app has exactly one <header>: the titlebar.
+    var header = document.querySelector("header");
+    if (!header || !tabTrigger("changes")) return;
+
+    changesBtn = document.createElement("button");
+    changesBtn.type = "button";
+    changesBtn.setAttribute("data-oc-changes", "closed");
+    changesBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      var target = tabSelected(tabTrigger("changes")) ? tabTrigger("session") : tabTrigger("changes");
+      if (target) target.click();
+      // The trigger updates its own state synchronously, but the panel swap is
+      // a Solid transition; re-read on the next tick rather than guessing.
+      window.setTimeout(renderChanges, 0);
+    });
+    header.appendChild(changesBtn);
+
+    // The tab can also change without us -- opening a review comment switches
+    // it -- so follow the trigger's own selected state.
+    var list = tabTrigger("changes").parentNode;
+    if (list && window.MutationObserver) {
+      if (changesWatch) changesWatch.disconnect();
+      changesWatch = new MutationObserver(renderChanges);
+      changesWatch.observe(list.parentNode || list, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ["aria-selected", "data-selected"]
+      });
+    }
+
+    renderChanges();
+  }
+
+  function unmountChanges() {
+    if (changesWatch) { changesWatch.disconnect(); changesWatch = null; }
+    if (changesBtn && changesBtn.parentNode) changesBtn.parentNode.removeChild(changesBtn);
+    changesBtn = null;
+  }
+
   /* ---------- refresh ---------- */
 
   function refresh() {
@@ -771,6 +888,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
       }
       if (!statusEl || !statusEl.isConnected) mountStatus();
       else renderStatus();
+      // The tab bar appears and disappears with the session route.
+      mountChanges();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
@@ -786,8 +905,10 @@ export function buildOverlayJs(config: OverlayConfig): string {
   function start() {
     if (STRIP_ENABLED) mount();
     mountStatus();
+    mountChanges();
     startStatusTick();
     watchDom();
+    if (!WANTS_DATA) return;
     refresh();
     openStream();
     if (!poll) {
@@ -805,15 +926,17 @@ export function buildOverlayJs(config: OverlayConfig): string {
     if (retryTimer) { window.clearTimeout(retryTimer); retryTimer = null; }
     unmount();
     unmountStatus();
+    unmountChanges();
   }
 
-  // The strip and the status bar are the only things that need session data.
-  // With both off, KEYBOARD_ENABLED alone got us here and there is nothing to
-  // poll or stream.
+  // The strip and the status bar are the only things that need session data;
+  // the changes button reads the DOM only. But it still has to be mounted and
+  // unmounted with the breakpoint, so it cannot ride on WANTS_DATA.
   var WANTS_DATA = STRIP_ENABLED || STATUS_ENABLED;
+  var WANTS_DOM = WANTS_DATA || CHANGES_ENABLED;
 
   function sync() {
-    if (!WANTS_DATA) return;
+    if (!WANTS_DOM) return;
     if (active()) start();
     else stop();
   }

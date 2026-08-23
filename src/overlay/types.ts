@@ -45,6 +45,16 @@ export interface OverlayConfig {
    * rows are demoted to subdued cards.
    */
   bubbles: boolean;
+  /**
+   * Replace the Session / Changes tab bar with a button in the titlebar.
+   *
+   * Upstream switches between the timeline and the diff view with a
+   * two-segment tab bar above the timeline. On a phone that is a permanent row
+   * of chrome -- 44px once the touch targets are honoured -- spent on a control
+   * used occasionally. The button lives in the titlebar, which is already
+   * there, and toggles back with the same tap.
+   */
+  changesButton: boolean;
   /** Widths at or below this (px) get the mobile treatment. */
   maxWidth: number;
   /**
