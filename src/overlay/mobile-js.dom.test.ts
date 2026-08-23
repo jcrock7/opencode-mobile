@@ -527,6 +527,74 @@ describe("the keyboard viewport", () => {
     expect(h.scrollCalls).toHaveLength(1);
   });
 
+  it("marks the shell while the keyboard is open, and unmarks it after", async () => {
+    // The mark is what lets the stylesheet collapse the bottom safe-area
+    // inset: iOS keeps reporting it with the keyboard up, so the layout goes
+    // on reserving a strip for a home indicator the keyboard is covering.
+    h = await harness({ standalone: true });
+    const root = () => h!.document.getElementById("root") as HTMLElement;
+    expect(root().getAttribute("data-oc-keyboard")).toBeNull();
+
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+    expect(root().getAttribute("data-oc-keyboard")).toBe("open");
+
+    h.viewport.height = 844;
+    h.viewport.emit("resize");
+    await h.flush();
+    expect(root().getAttribute("data-oc-keyboard")).toBeNull();
+  });
+
+  it("does not mark the shell in a browser tab", async () => {
+    h = await harness({ standalone: false });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    const root = h.document.getElementById("root") as HTMLElement;
+    expect(root.getAttribute("data-oc-keyboard")).toBeNull();
+  });
+
+  it("renders no debug readout unless asked", async () => {
+    h = await harness({ standalone: true });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    expect(h.document.querySelector("[data-oc-kbdebug]")).toBeNull();
+  });
+
+  it("reports the measurements it acts on when debug is enabled", async () => {
+    // So the next round of this is a measurement rather than another attempt
+    // to read a gap off a screenshot in pixels.
+    h = await harness({ standalone: true, config: { debug: true } });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    const text = h.document.querySelector("[data-oc-kbdebug]")?.textContent ?? "";
+    expect(text).toContain("kb open");
+    expect(text).toContain("vv 460");
+    expect(text).toContain("inner 844");
+    expect(text).toContain("root 460");
+    expect(text).toContain("sab ");
+  });
+
+  it("keeps the debug readout current when the keyboard closes", async () => {
+    h = await harness({ standalone: true, config: { debug: true } });
+    h.viewport.height = 460;
+    h.viewport.emit("resize");
+    await h.flush();
+    h.viewport.height = 844;
+    h.viewport.emit("resize");
+    await h.flush();
+
+    const text = h.document.querySelector("[data-oc-kbdebug]")?.textContent ?? "";
+    expect(text).toContain("kb closed");
+    expect(text).toContain("root auto");
+  });
+
   it("does nothing when the fix is switched off", async () => {
     h = await harness({ standalone: true, config: { keyboardViewport: false } });
     h.viewport.height = 460;

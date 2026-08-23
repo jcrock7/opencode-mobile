@@ -19,7 +19,7 @@ Mobile push notifications for OpenCode via Expo. Connect your phone to receive n
   down on close.
 - Removed dead code: `assistant-message.ts`, `log-level-test.ts`, `sdk-logger.ts`,
   `src/push/notification-handler.ts`.
-- Test suite grown to 628 tests with an enforced 85% coverage threshold
+- Test suite grown to 636 tests with an enforced 85% coverage threshold
   (`npx vitest run --coverage`).
 - **Removed four unused dependencies**: `cloudflared`, `cloudflared-tunnel`,
   `expo` and `ngrok` (the v5 beta; `@ngrok/ngrok` is the one actually used).
@@ -325,6 +325,20 @@ plugin, it can inject a mobile stylesheet into the HTML on its way to your phone
   only at phone widths -- in a browser tab Safari's own toolbar moves the visual
   viewport for reasons that have nothing to do with the keyboard. Switch off
   with `OPENCODE_MOBILE_OVERLAY_KEYBOARD=0`.
+- **Collapses the home-indicator inset while the keyboard is up.** Pinning the
+  shell fixed the layout but left a blank band above the keyboard, because iOS
+  never zeroes `env(safe-area-inset-bottom)` for the keyboard -- the insets
+  describe the *device*, not whatever happens to be covering it. So the v2
+  layout kept reserving a strip for a home indicator the keyboard was sitting on
+  top of, and the overlay's own dock padding added a little more. With the
+  keyboard open there is no home indicator to avoid, so the script marks the
+  shell `data-oc-keyboard="open"` and both collapse.
+- **Reports what it measured**, with `OPENCODE_MOBILE_OVERLAY_DEBUG=1`: a strip
+  at the top of the phone showing whether the keyboard is detected, the visual
+  viewport against the layout viewport, the height that got pinned, the bottom
+  inset iOS is actually claiming, and the scroll offsets. Two rounds of this
+  were diagnosed by measuring gaps off a screenshot in pixels, which is slow and
+  picks the wrong answer when two explanations predict a similar gap.
 - **Surfaces sub-agent work.** Child sessions are what a sub-agent runs in, and
   they used to show nowhere at all on a phone: not in the strip (excluded by
   design) and not in notifications (suppressed by design). The status bar was

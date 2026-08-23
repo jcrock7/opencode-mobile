@@ -179,6 +179,34 @@ describe("overlay assets", () => {
       );
     });
 
+    it("collapses the bottom safe-area inset while the keyboard is open", () => {
+      // iOS never zeroes env(safe-area-inset-bottom) for the keyboard, so the
+      // layout keeps reserving a strip for a home indicator the keyboard is
+      // covering. That strip is the blank band above the keyboard.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain('#root[data-oc-keyboard="open"] > *');
+      expect(css).toMatch(
+        /#root\[data-oc-keyboard="open"\] > \*\s*\{[^}]*padding-bottom: 0 !important/,
+      );
+      // The dock adds its own; that has to go too or the band just shrinks.
+      expect(css).toContain('#root[data-oc-keyboard="open"] [data-component="session-prompt-dock"]');
+    });
+
+    it("styles the keyboard rules outside any width media query", () => {
+      // The script decides when they apply -- it already limits itself to a
+      // standalone phone -- so width-gating them as well would double-gate.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      const unconditional = stripMediaBlocks(css);
+      expect(unconditional).toContain('#root[data-oc-keyboard="open"] > *');
+    });
+
+    it("styles the debug readout even though only debug renders it", () => {
+      // Never an unstyled string of numbers across the screen.
+      const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
+      expect(css).toContain("[data-oc-kbdebug]");
+      expect(css).toMatch(/\[data-oc-kbdebug\]\s*\{[^}]*pointer-events: none !important/);
+    });
+
     it("grows the project and session rows you pick a session from", () => {
       const css = getOverlayAsset(OVERLAY_CSS_PATH, CONFIG)!.body;
       for (const row of [

@@ -361,7 +361,16 @@ signals.forEach((signal) => {
 22. **A Progress Notification Is Not A Start Notification**: Arm on busy, cancel
     on settle, fire once. A push for every turn that begins is noise, because
     most turns end before you could read it.
-23. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
+23. **Safe-Area Insets Describe The Device, Not What Covers It**: iOS keeps
+    reporting `env(safe-area-inset-bottom)` at full value with the keyboard up,
+    so any layout that pads for the home indicator reserves dead space above the
+    keyboard. Collapse it while `#root[data-oc-keyboard="open"]` is set.
+24. **Measure, Do Not Read Gaps Off Screenshots**: two layout rounds were
+    diagnosed by converting screenshot pixels to points, which is slow and
+    ambiguous when two causes predict a similar gap. The debug readout
+    (`OPENCODE_MOBILE_OVERLAY_DEBUG=1`) exists so the phone reports the numbers;
+    extend it rather than re-deriving them.
+25. **The Keyboard Is Script-Only**: iOS does not shrink the layout viewport for
     the software keyboard, and `#root` is `height: 100vh` in standalone mode by
     upstream's deliberate choice. Only `visualViewport` sees the keyboard; no
     CSS unit does. Anything that pins the shell must apply solely while

@@ -29,6 +29,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
   var STRIP_ENABLED = ${config.sessionStrip ? "true" : "false"};
   var STATUS_ENABLED = ${config.statusBar ? "true" : "false"};
   var KEYBOARD_ENABLED = ${config.keyboardViewport ? "true" : "false"};
+  var DEBUG = ${config.debug ? "true" : "false"};
   if (typeof window === "undefined" || !window.document) return;
 
   /* ---------- keyboard viewport ----------
@@ -64,6 +65,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
     function clear() {
       appliedHeight = -1;
       root.style.removeProperty("height");
+      root.removeAttribute("data-oc-keyboard");
     }
 
     function apply() {
@@ -72,6 +74,7 @@ export function buildOverlayJs(config: OverlayConfig): string {
       // upstream's own height is right and we must not hold it hostage.
       if (!standalone.matches || !mq.matches) {
         if (appliedHeight !== -1) clear();
+        renderDebug();
         return;
       }
       // Undo the document scroll iOS applied to reveal the focused field. Once
@@ -85,6 +88,8 @@ export function buildOverlayJs(config: OverlayConfig): string {
       // pinning a pixel value that the next rotation would make wrong.
       if (height >= Math.round(window.innerHeight) - 2) {
         if (appliedHeight !== -1) clear();
+        root.removeAttribute("data-oc-keyboard");
+        renderDebug();
         return;
       }
       if (height !== appliedHeight) {
@@ -92,6 +97,52 @@ export function buildOverlayJs(config: OverlayConfig): string {
         // Inline wins: upstream's height is not !important.
         root.style.setProperty("height", height + "px", "important");
       }
+      // Marks the shell so the stylesheet can collapse the bottom safe-area
+      // inset. iOS does not zero env(safe-area-inset-bottom) when the keyboard
+      // opens -- the insets describe the device, not whatever is covering it --
+      // so the layout goes on reserving a strip for a home indicator the
+      // keyboard is sitting on top of. That strip is the blank band between the
+      // composer and the keyboard.
+      root.setAttribute("data-oc-keyboard", "open");
+      renderDebug();
+    }
+
+    /**
+     * A live readout of the numbers this whole section turns on.
+     *
+     * Two rounds of this were diagnosed by measuring a screenshot in pixels,
+     * which is slow and gets the wrong answer when two explanations predict a
+     * similar gap. With OPENCODE_MOBILE_OVERLAY_DEBUG=1 the phone reports the
+     * values instead: whether the keyboard is detected, what the visual
+     * viewport measures against the layout viewport, what height got pinned,
+     * and what iOS claims the bottom inset is -- measured, because that is the
+     * value the layout reserves space for and never zeroes for the keyboard.
+     */
+    function safeAreaBottom() {
+      var probe = document.createElement("div");
+      probe.style.cssText =
+        "position:fixed;left:-9999px;bottom:0;width:1px;height:env(safe-area-inset-bottom,0px);";
+      document.body.appendChild(probe);
+      var measured = probe.offsetHeight;
+      if (probe.parentNode) probe.parentNode.removeChild(probe);
+      return measured;
+    }
+
+    function renderDebug() {
+      if (!DEBUG) return;
+      var el = document.querySelector("[data-oc-kbdebug]");
+      if (!el) {
+        el = document.createElement("div");
+        el.setAttribute("data-oc-kbdebug", "");
+        document.body.appendChild(el);
+      }
+      el.textContent =
+        "kb " + (root.getAttribute("data-oc-keyboard") === "open" ? "open" : "closed") +
+        " | vv " + Math.round(vv.height) +
+        " | inner " + Math.round(window.innerHeight) +
+        " | root " + (appliedHeight === -1 ? "auto" : appliedHeight) +
+        " | sab " + safeAreaBottom() +
+        " | y " + Math.round(window.scrollY) + "/" + Math.round(vv.offsetTop);
     }
 
     function schedule() {

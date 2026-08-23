@@ -432,6 +432,44 @@ export function buildOverlayCss(config: OverlayConfig): string {
   }
 }
 
+/* ---- keyboard debug readout ------------------------------------------------
+   Rendered by overlay.js only when OPENCODE_MOBILE_OVERLAY_DEBUG=1. Styled
+   unconditionally so it is never an unstyled string across the screen. */
+[data-oc-kbdebug] {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: env(safe-area-inset-top, 0px) !important;
+  z-index: 2147483647 !important;
+  padding: 2px 6px !important;
+  background: #0c6e68 !important;
+  color: #ffffff !important;
+  font: 600 9px/1.4 ui-monospace, "SF Mono", Menlo, monospace !important;
+  letter-spacing: .01em !important;
+  text-align: center !important;
+  pointer-events: none !important;
+}
+
+/* ---- keyboard open ---------------------------------------------------------
+   Set by overlay.js while the software keyboard is up (see its keyboard
+   section). Outside any width media query on purpose: the script decides when
+   this applies, and it already restricts itself to a standalone phone.
+
+   iOS never zeroes env(safe-area-inset-bottom) for the keyboard -- the insets
+   describe the device, not whatever is covering it -- so the v2 layout goes on
+   reserving a strip for a home indicator the keyboard is sitting on top of, and
+   the overlay reserves a little more on the dock. Together that is the blank
+   band between the composer and the keyboard. With the keyboard up there is no
+   home indicator to avoid, so both collapse. */
+#root[data-oc-keyboard="open"] > * {
+  padding-bottom: 0 !important;
+}
+#root[data-oc-keyboard="open"] [data-component="dock-prompt"],
+#root[data-oc-keyboard="open"] [data-component="session-prompt-dock"],
+#root[data-oc-keyboard="open"] [data-component="session-followup-dock"] {
+  padding-bottom: 0 !important;
+}
+
 /* ---- session switcher strip ----------------------------------------------
    Rendered by overlay.js. Styles live here (unconditionally, so the strip is
    never unstyled) but the element only ever mounts on narrow viewports. */
