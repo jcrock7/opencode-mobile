@@ -23,6 +23,14 @@ public sealed record WorkflowRunOutcome(
     WorkflowResult? Result = null,
     string? Error = null);
 
+/// <summary>Starts and resumes runs of one workflow type. Implemented by <see cref="WorkflowRunner"/>; fake it in tests.</summary>
+public interface IWorkflowRunner
+{
+    string WorkflowName { get; }
+    Task<WorkflowRunOutcome> StartAsync(WorkflowTrigger trigger, CancellationToken cancellationToken = default);
+    Task<WorkflowRunOutcome> ResumeAsync(string requestId, Decision decision, CancellationToken cancellationToken = default);
+}
+
 /// <summary>
 /// Drives Agent Framework runs as a headless turn loop:
 /// <list type="number">
@@ -33,7 +41,7 @@ public sealed record WorkflowRunOutcome(
 /// next halt.</item>
 /// </list>
 /// </summary>
-public sealed class WorkflowRunner
+public sealed class WorkflowRunner : IWorkflowRunner
 {
     private readonly IWorkflowFactory _workflowFactory;
     private readonly CheckpointManager _checkpointManager;

@@ -107,7 +107,7 @@ public class DecisionAgent : AgentApplication
         _logger.LogInformation("Decision {Outcome} on case {CaseId} by {DecidedBy}; resuming workflow in background.",
             decision.Outcome, pending.Request.CaseId, decidedBy);
 
-        WorkflowRunner runner = _runners.Get(pending.WorkflowName);
+        IWorkflowRunner runner = _runners.Get(pending.WorkflowName);
         _backgroundQueue.QueueBackgroundWorkItem(async ct =>
         {
             try

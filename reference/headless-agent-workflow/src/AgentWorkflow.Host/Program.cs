@@ -11,7 +11,9 @@ using AgentWorkflow.Core.Mcp;
 using AgentWorkflow.Core.Runtime;
 using AgentWorkflow.Core.Workflow;
 using AgentWorkflow.Host;
+using AgentWorkflow.Core.Intake;
 using AgentWorkflow.Host.Infrastructure;
+using AgentWorkflow.Host.Intake;
 using AgentWorkflow.Host.Teams;
 using AgentWorkflow.Host.Triggers;
 using Azure.Core;
@@ -21,6 +23,7 @@ using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.Agents.Storage.Blobs;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 using OpenAI;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -109,11 +112,28 @@ builder.Services.Configure<ScheduleOptions>(config.GetSection("Triggers:Schedule
 builder.Services.AddSingleton<IWorkflowTriggerSource, ConfigurationTriggerSource>();
 builder.Services.AddHostedService<ScheduledTriggerService>();
 
+// Email intake (proof of concept for broker submissions): a shared mailbox in production, a drop folder locally.
+builder.Services.Configure<EmailIntakeOptions>(config.GetSection("Intake:Email"));
+builder.Services.AddSingleton<IIntakeStore>(sp => new FileIntakeStore(sp.GetRequiredService<IOptions<EmailIntakeOptions>>().Value.Directory));
+builder.Services.AddSingleton<IMailboxClient>(sp =>
+{
+    EmailIntakeOptions o = sp.GetRequiredService<IOptions<EmailIntakeOptions>>().Value;
+    return o.Mode.Equals("Graph", StringComparison.OrdinalIgnoreCase)
+        ? new GraphMailboxClient(
+            sp.GetRequiredService<TokenCredential>(),
+            o.MailboxAddress ?? throw new InvalidOperationException("Intake:Email:MailboxAddress is required in Graph mode."),
+            sp.GetRequiredService<ILogger<GraphMailboxClient>>())
+        : new DirectoryMailboxClient(o.DropDirectory ?? Path.Combine(AppContext.BaseDirectory, ".state", "mail-drop"));
+});
+builder.Services.AddSingleton<EmailIntakeProcessor>();
+builder.Services.AddHostedService<EmailIntakeService>();
+
 WebApplication app = builder.Build();
 
 app.UseAgents();                 // authentication + authorization middleware for the Agents SDK endpoints
 app.MapDefaultAgentEndpoints();  // GET / and POST /api/messages (Teams)
 app.MapWorkflowTriggerEndpoints(requireAuth: !isDev);
+app.MapIntakeEndpoints(requireAuth: !isDev);
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
 app.Run();

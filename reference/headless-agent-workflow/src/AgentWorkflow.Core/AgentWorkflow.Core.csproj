@@ -13,6 +13,8 @@
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="PdfPig" />
+    <PackageReference Include="System.IO.Packaging" />
   </ItemGroup>
 
 </Project>

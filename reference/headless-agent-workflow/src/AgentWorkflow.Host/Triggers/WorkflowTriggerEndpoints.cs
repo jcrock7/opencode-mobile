@@ -22,7 +22,7 @@ public static class WorkflowTriggerEndpoints
 
         group.MapPost("/{workflowName}/run", async (string workflowName, WorkflowTrigger trigger, WorkflowRunnerRegistry runners, CancellationToken ct) =>
         {
-            if (!runners.TryGet(workflowName, out WorkflowRunner runner))
+            if (!runners.TryGet(workflowName, out IWorkflowRunner runner))
             {
                 return Results.NotFound(new { error = $"Unknown workflow '{workflowName}'.", known = runners.Names });
             }

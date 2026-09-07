@@ -42,6 +42,9 @@ Two workflows are registered in the host and share every piece of plumbing:
   [docs/workflows/lease-review.md](docs/workflows/lease-review.md).
 - **HumanDecision** (purchasing, the minimal template): a purchase order lands on payment hold in the ERP.
 
+Leases can also arrive by **email intake**: brokers send a draft to a shared mailbox, the host files it and starts
+the review with no human data entry. See [docs/intake/email-intake.md](docs/intake/email-intake.md).
+
 The minimal template, step by step:
 
 ```
@@ -70,6 +73,8 @@ infra/provision.sh          Script an admin can review and run for the Azure/Ent
 docs/teams-and-human-decisions.md   Proactive messaging, card design, routing, audit
 docs/building-new-workflows.md      Step-by-step to create the next workflow from this one
 docs/workflows/lease-review.md      The Land team lease review: what it captures, tools, routing, adaptation
+docs/intake/email-intake.md         Broker email intake (PoC): shared mailbox via Graph, drop folder locally, guardrails
+samples/mail-drop/                  A sample broker email + lease you can drop into the local intake folder
 ```
 
 ## Build and test
@@ -95,7 +100,14 @@ The tests use a scripted model client and a file-based checkpoint store, so they
 3. Start the MCP server: `dotnet run --project src/SampleMcpServer --urls https://localhost:7071`.
 4. Start the host: `dotnet run --project src/AgentWorkflow.Host` and expose it with a dev tunnel; set the tunnel
    URL + `/api/messages` as the Azure Bot messaging endpoint. Install the Teams app from `src/AgentWorkflow.Host/teams-app`.
-5. Kick off a run (no auth required in Development):
+5. Kick off a run. Either drop the sample broker email into the intake folder (Development config polls it every
+   10 seconds):
+
+   ```bash
+   mkdir -p src/AgentWorkflow.Host/.state/mail-drop && cp -r samples/mail-drop/2026-09-07-miller src/AgentWorkflow.Host/.state/mail-drop/
+   ```
+
+   or call the HTTP trigger directly (no auth required in Development):
 
    ```bash
    curl -X POST http://localhost:5000/api/workflows/LeaseReview/run \

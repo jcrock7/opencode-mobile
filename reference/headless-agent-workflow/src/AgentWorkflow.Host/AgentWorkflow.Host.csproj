@@ -8,6 +8,7 @@
   <ItemGroup>
     <!-- Microsoft 365 Agents SDK: Teams channel, activity protocol, proactive messaging -->
     <PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" />
+    <PackageReference Include="Microsoft.Graph" />
     <PackageReference Include="Microsoft.Agents.Authentication.Msal" />
     <PackageReference Include="Microsoft.Agents.Storage.Blobs" />
 

@@ -75,7 +75,7 @@ public sealed class ScheduledTriggerService(
                         continue; // already started in this process; a real source would mark cases as taken
                     }
 
-                    if (!runners.TryGet(scheduled.WorkflowName, out WorkflowRunner runner))
+                    if (!runners.TryGet(scheduled.WorkflowName, out IWorkflowRunner runner))
                     {
                         logger.LogWarning("Scheduled case {CaseId} names unknown workflow {Workflow}; skipped.", scheduled.CaseId, scheduled.WorkflowName);
                         continue;

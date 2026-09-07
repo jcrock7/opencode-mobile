@@ -16,6 +16,11 @@
     <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.8.77" />
     <PackageVersion Include="Microsoft.Agents.Storage.Blobs" Version="1.8.77" />
 
+    <!-- Email intake: Microsoft Graph for the shared mailbox, text extraction for lease attachments -->
+    <PackageVersion Include="Microsoft.Graph" Version="6.6.0" />
+    <PackageVersion Include="PdfPig" Version="0.1.16" />
+    <PackageVersion Include="System.IO.Packaging" Version="10.0.11" />
+
     <!-- Identity -->
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Microsoft.Identity.Web" Version="4.14.2" />

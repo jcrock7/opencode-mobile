@@ -141,6 +141,20 @@ for ROLE_ID in "$ROLE_READ_ID" "$ROLE_EXEC_ID"; do
 done
 echo "MCP app: appId=$MCP_APP_ID identifierUri=$MCP_SERVER_URL roles assigned to $MI_NAME"
 
+# ---- F. Intake mailbox: Graph Mail.ReadWrite on the managed identity (the mailbox + access policy are Exchange steps) ----
+if [ "${GRANT_MAIL_READWRITE:-true}" = "true" ]; then
+  GRAPH_SP=$(az ad sp list --filter "appId eq '00000003-0000-0000-c000-000000000000'" --query '[0].id' -o tsv)
+  MAIL_ROLE=$(az ad sp show --id "$GRAPH_SP" --query "appRoles[?value=='Mail.ReadWrite'].id | [0]" -o tsv)
+  EXISTING=$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$GRAPH_SP/appRoleAssignedTo?\$top=999" \
+    --query "value[?principalId=='$MI_PRINCIPAL_ID' && appRoleId=='$MAIL_ROLE'] | length(@)" -o tsv)
+  if [ "$EXISTING" = "0" ]; then
+    az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$GRAPH_SP/appRoleAssignedTo" \
+      --headers "Content-Type=application/json" \
+      --body "{\"principalId\":\"$MI_PRINCIPAL_ID\",\"resourceId\":\"$GRAPH_SP\",\"appRoleId\":\"$MAIL_ROLE\"}" -o none
+  fi
+  echo "Graph Mail.ReadWrite granted to $MI_NAME. REQUIRED: scope it with New-ApplicationAccessPolicy (docs/azure-admin-request.md, F.3)."
+fi
+
 # ---- Handoff ----
 cat > "$(dirname "$0")/handoff.json" <<JSON
 {
@@ -162,7 +176,8 @@ cat > "$(dirname "$0")/handoff.json" <<JSON
     "Dev environment only: create a 90-day client secret on $AGENT_APP_NAME and share it out of band.",
     "Teams admin: upload and publish the Teams app package (botId = $AGENT_APP_ID).",
     "Provide approver Entra object ids: az ad user show --id <upn> --query id -o tsv",
-    "Developers: grant 'Cognitive Services OpenAI User' on $AOAI_NAME to the dev group."
+    "Developers: grant 'Cognitive Services OpenAI User' on $AOAI_NAME to the dev group.",
+    "Exchange admin: create shared mailbox leases@<domain> and New-ApplicationAccessPolicy for app $MI_CLIENT_ID (docs section F)."
   ]
 }
 JSON

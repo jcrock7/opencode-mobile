@@ -11,4 +11,9 @@
     <PackageReference Include="Microsoft.Identity.Web" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Only for the intake read-through (FileIntakeStore). A real land MCP server has no dependency on the workflow. -->
+    <ProjectReference Include="..\AgentWorkflow.Core\AgentWorkflow.Core.csproj" />
+  </ItemGroup>
+
 </Project>

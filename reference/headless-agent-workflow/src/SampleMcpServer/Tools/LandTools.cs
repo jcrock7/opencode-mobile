@@ -25,9 +25,14 @@ public sealed record LeaseReviewRecord(string ReviewId, string LeaseId, string O
 
 public sealed record CurativeTask(string TaskId, string LeaseId, string Category, string Description, string RecommendedInstrument, string Timing, string Status);
 
-/// <summary>In-memory stand-in for the land system. Fictional Appalachian tract with realistic title issues.</summary>
-public sealed class LandRepository
+/// <summary>
+/// In-memory stand-in for the land system (fictional Appalachian tract with realistic title issues), plus a
+/// read-through to the email intake store so leases that arrived by email are visible to the same tools.
+/// </summary>
+public sealed class LandRepository(IConfiguration configuration)
 {
+    private string? IntakeDirectory => configuration["Intake:Directory"];
+
     private const string LeaseId = "L-2026-0142";
     private const string TractId = "T-3391";
 
@@ -128,11 +133,37 @@ public sealed class LandRepository
     private int _nextReview = 1;
     private int _nextTask = 1;
 
-    public LeaseMetadata? Lease(string leaseId) => _leases.GetValueOrDefault(leaseId);
+    public LeaseMetadata? Lease(string leaseId) => _leases.GetValueOrDefault(leaseId) ?? IntakeLease(leaseId);
 
-    public IEnumerable<LeaseMetadata> PendingReview() => _leases.Values.Where(l => l.Status == "PendingReview");
+    public IEnumerable<LeaseMetadata> PendingReview() =>
+        _leases.Values.Where(l => l.Status == "PendingReview").Concat(IntakeLeases().Where(l => l.Status is "Received" or "UnderReview"));
 
-    public string? Document(string documentId) => _documents.GetValueOrDefault(documentId);
+    public string? Document(string documentId) =>
+        _documents.GetValueOrDefault(documentId)
+        ?? (IntakeDirectory is null ? null : AgentWorkflow.Core.Intake.FileIntakeStore.ReadDocumentText(IntakeDirectory, documentId));
+
+    private LeaseMetadata? IntakeLease(string leaseId) => IntakeLeases().FirstOrDefault(l => l.LeaseId.Equals(leaseId, StringComparison.OrdinalIgnoreCase));
+
+    private IEnumerable<LeaseMetadata> IntakeLeases()
+    {
+        if (IntakeDirectory is null)
+        {
+            return [];
+        }
+
+        var store = new AgentWorkflow.Core.Intake.FileIntakeStore(IntakeDirectory);
+        return store.ListRecordsAsync().GetAwaiter().GetResult().Select(r => new LeaseMetadata(
+            r.LeaseId,
+            _statusOverrides.GetValueOrDefault(r.LeaseId, r.Stage),
+            r.TractId ?? "unknown - locate from the lease legal description and title records",
+            r.County ?? "unknown",
+            r.State ?? "unknown",
+            r.BrokerFirm,
+            r.DocumentId,
+            DateOnly.FromDateTime(r.ReceivedAt.UtcDateTime)));
+    }
+
+    private readonly Dictionary<string, string> _statusOverrides = new(StringComparer.OrdinalIgnoreCase);
 
     public TractTitle? Title(string tractId) => string.Equals(tractId, TractId, StringComparison.OrdinalIgnoreCase) ? _title : null;
 
@@ -160,7 +191,15 @@ public sealed class LandRepository
     {
         LeaseMetadata lease = Lease(leaseId) ?? throw new KeyNotFoundException($"Lease {leaseId} not found.");
         LeaseMetadata updated = lease with { Status = status };
-        _leases[leaseId] = updated;
+        if (_leases.ContainsKey(leaseId))
+        {
+            _leases[leaseId] = updated;
+        }
+        else
+        {
+            _statusOverrides[leaseId] = status; // intake leases: the SharePoint/land system row owns status later
+        }
+
         return updated;
     }
 }

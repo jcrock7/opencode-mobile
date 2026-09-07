@@ -16,9 +16,10 @@ describe the same work for review or manual execution.
 | C. MCP server app registration, app roles, role assignment to the managed identity | Entra admin center / Graph | *Application Administrator* (create app, set manifest) and *Cloud Application Administrator* or *Privileged Role Administrator* (app-role assignment to a service principal) | Entra admin |
 | D. Teams app publication | Teams admin center | *Teams Administrator* | Teams admin |
 | E. Developer onboarding (RBAC for laptops) | Azure portal / `az` | *User Access Administrator* | Azure admin |
-| F. Fill configuration, deploy, test | Repo | none | Development team |
+| F. Broker intake mailbox (shared mailbox, Graph Mail.ReadWrite on the managed identity, application access policy) | Exchange admin center / Graph / Exchange Online PowerShell | *Exchange Administrator* plus *Privileged Role Administrator* or *Cloud Application Administrator* for the Graph permission grant | Exchange/Entra admin |
+| G. Fill configuration, deploy, test | Repo | none | Development team |
 
-Steps A through E are the request. Step F is ours.
+Steps A through F are the request. Step G is ours.
 
 ## Inputs we provide up front
 
@@ -124,6 +125,38 @@ the assignment. The server validates audience and roles and rejects everything e
 4. For the dev tenant or a pilot team, optionally allow **Upload custom apps** in the app setup policy for the
    development team so they can sideload without waiting for publication.
 
+## F. Broker intake mailbox (email intake proof of concept)
+
+Land brokers submit draft leases by email. The workflow host reads one shared mailbox with the managed identity
+and moves processed messages into sub-folders. Three steps:
+
+1. **Shared mailbox** `leases@{{Domain}}` (Exchange admin center > Recipients > Mailboxes > Add a shared mailbox).
+   No license is required. Add the Land team as members so people can also look at it.
+2. **Graph application permission `Mail.ReadWrite`** on the managed identity from A.2. Managed identities cannot be
+   granted permissions in the portal's API permissions blade; use Graph (the script does it):
+
+   ```bash
+   MI_OID=<managed identity principal id>
+   GRAPH_SP=$(az ad sp list --filter "appId eq '00000003-0000-0000-c000-000000000000'" --query '[0].id' -o tsv)
+   ROLE_ID=$(az ad sp show --id $GRAPH_SP --query "appRoles[?value=='Mail.ReadWrite'].id | [0]" -o tsv)
+   az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$GRAPH_SP/appRoleAssignedTo"      --body "{\"principalId\":\"$MI_OID\",\"resourceId\":\"$GRAPH_SP\",\"appRoleId\":\"$ROLE_ID\"}"
+   ```
+
+3. **Application access policy** so that permission reaches only the intake mailbox (Exchange Online PowerShell):
+
+   ```powershell
+   Connect-ExchangeOnline
+   New-DistributionGroup -Name "Agent Intake Mailboxes" -Type Security -Members leases@{{Domain}}
+   New-ApplicationAccessPolicy -AppId <managed identity client id> -PolicyScopeGroupId "Agent Intake Mailboxes" `
+     -AccessRight RestrictAccess -Description "Agent workflow host may read only the lease intake mailbox"
+   Test-ApplicationAccessPolicy -Identity leases@{{Domain}} -AppId <managed identity client id>
+   ```
+
+   Without this policy `Mail.ReadWrite` would cover every mailbox in the tenant. The policy takes up to an hour
+   to apply.
+
+Later, when the broker acknowledgement email is added, the same identity needs `Mail.Send` under the same policy.
+
 ## E. Developer onboarding
 
 Developers run the host locally with their own sign-in (`az login`) and need:
@@ -149,6 +182,7 @@ Please return this table filled in (the script writes it as `handoff.json`):
 | Host URL, MCP server URL (A.5) | Bot endpoint check, `Mcp:Servers[].Endpoint`, Teams manifest `validDomains` |
 | MCP app (client) ID + Application ID URI (C) | MCP server `AzureAd:ClientId`, `AzureAd:Audience`, `Mcp:ResourceUri`; host `Mcp:Servers[].Scope` = `<Application ID URI>/.default` |
 | Approver Entra object IDs | `Approvals:Default:UserObjectId`, `Approvals:Routes[].UserObjectId` (`az ad user show --id user@contoso.com --query id`) |
+| Intake mailbox address (F) | `Intake:Email:MailboxAddress`; confirm the application access policy test passed |
 | Dev-only bot client secret (B, dev env only) | .NET user secrets on developer machines |
 
 ## Security notes for the reviewer
