@@ -24,10 +24,15 @@ Teams requires the tenant id and, without a prior inbound activity, a service UR
   "Default": { "UserObjectId": "<fallback approver>" },
   "Routes": [
     { "CaseType": "PurchaseOrderHold", "UserObjectId": "<AP lead>" },
-    { "CaseType": "VendorOnboarding",  "UserObjectId": "<any member>", "TeamsChannelId": "19:...@thread.tacv2" }
+    { "CaseType": "LeaseReview", "Attribute": "state", "Value": "PA", "UserObjectId": "<PA land manager>", "TeamsChannelId": "19:...@thread.tacv2" },
+    { "CaseType": "LeaseReview", "UserObjectId": "<land manager>" }
   ]
 }
 ```
+
+A route may also match a trigger attribute (`Attribute`/`Value`, case-insensitive); the most specific route wins:
+case type + attribute, then case type only, then `Default`. Trigger attributes travel on the `DecisionRequest`, so
+"state", "district", or "business unit" set by the calling system drive routing without code.
 
 - **Personal chat** (`UserObjectId` only): private, one accountable person, the card renders in their chat list.
 - **Channel post** (`TeamsChannelId`): visible to the team, anyone in it can decide, the first click wins.
@@ -38,7 +43,10 @@ with a service call; the rest is unchanged.
 
 ## The decision card
 
-`Teams/DecisionCard.cs` builds three cards with `System.Text.Json` nodes (no card library needed):
+`Teams/DecisionCard.cs` builds three cards with `System.Text.Json` nodes (no card library needed). Workflows with a
+richer payload add their own request card and are dispatched by case type: `Teams/LeaseReviewCard.cs` renders the
+`LeaseReview` detail (terms, provisions, curative items) and reuses the same verb and action data, so the click
+handler is shared.
 
 1. **Request card**: title, risk, summary/recommendation/rationale facts, evidence list, highlighted proposed
    action, an optional comments box, and two `Action.Execute` buttons. Each button's `data` carries
@@ -80,9 +88,9 @@ Application Insights.
 
 ## Fallback and operations
 
-- `POST /api/workflows/human-decision/{requestId}/decide` records a decision without Teams (Teams outage,
-  automated tests).
-- `GET /api/workflows/human-decision/pending` and the `pending` chat command list what is waiting.
+- `POST /api/workflows/decisions/{requestId}/decide` records a decision without Teams (Teams outage,
+  automated tests). The pending record names its workflow, so the right runner resumes it.
+- `GET /api/workflows/pending` and the `pending` chat command list what is waiting.
 - Expiry and escalation are not built in. Add a timer (Functions timer or the scheduled service) that lists pending
   records older than N hours and either re-notifies, re-routes to the default approver, or auto-rejects by calling
   `ResumeAsync` with a synthetic decision (`DecidedBy = "policy:timeout"`).

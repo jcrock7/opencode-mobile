@@ -1,3 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using AgentWorkflow.Core.Runtime;
+
 namespace AgentWorkflow.Core.Models;
 
 /// <summary>
@@ -12,8 +16,9 @@ public sealed record WorkflowTrigger(
     Dictionary<string, string>? Attributes = null);
 
 /// <summary>
-/// Structured output the analyst agent must produce. Keep every field a string or
-/// list so the JSON schema handed to the model stays simple and provider-neutral.
+/// The common decision surface every workflow produces for a human. Keep every field a string or
+/// list so the JSON schema handed to the model stays simple and provider-neutral. Workflow-specific
+/// detail (a full lease review, an invoice breakdown) travels in <see cref="DecisionRequest.Detail"/>.
 /// </summary>
 public sealed record Assessment(
     string Summary,
@@ -27,11 +32,46 @@ public sealed record Assessment(
 /// What is sent to a human. This is the request type of the workflow's RequestPort,
 /// so it is persisted inside the checkpoint while the human takes their time.
 /// </summary>
+/// <param name="Attributes">Trigger attributes (state, district, business unit) used for approver routing.</param>
+/// <param name="Detail">Workflow-specific structured payload rendered on the card and handed to the apply step.</param>
 public sealed record DecisionRequest(
     string CaseId,
     string CaseType,
     Assessment Assessment,
-    DateTimeOffset RequestedAt);
+    DateTimeOffset RequestedAt,
+    Dictionary<string, string>? Attributes = null,
+    JsonElement? Detail = null)
+{
+    /// <summary>Creates a request carrying a typed detail payload.</summary>
+    public static DecisionRequest Create<TDetail>(
+        string caseId,
+        string caseType,
+        Assessment assessment,
+        TDetail detail,
+        Dictionary<string, string>? attributes = null) =>
+        new(caseId, caseType, assessment, DateTimeOffset.UtcNow, attributes,
+            JsonSerializer.SerializeToElement(detail, WorkflowJson.CheckpointOptions));
+
+    /// <summary>Reads the detail payload back as <typeparamref name="TDetail"/>.</summary>
+    public bool TryGetDetail<TDetail>([NotNullWhen(true)] out TDetail? detail) where TDetail : class
+    {
+        detail = null;
+        if (Detail is not { ValueKind: JsonValueKind.Object } element)
+        {
+            return false;
+        }
+
+        try
+        {
+            detail = element.Deserialize<TDetail>(WorkflowJson.CheckpointOptions);
+            return detail is not null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+}
 
 public enum DecisionOutcome
 {

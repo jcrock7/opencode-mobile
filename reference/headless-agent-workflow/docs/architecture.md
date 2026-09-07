@@ -69,7 +69,9 @@ A rehydrated graph must match the one that wrote the checkpoint: same executor i
 
 - Executors declare constant ids (`AssessExecutor.ExecutorId`).
 - Agents get fixed `Id` and `Name` in `WorkflowAgents`.
-- `IWorkflowFactory` rebuilds the graph for every start and resume instead of caching one instance.
+- `IWorkflowFactory` rebuilds the graph for every start and resume instead of caching one instance. One factory
+  per workflow type; `WorkflowRunnerRegistry` holds a runner per factory and pending decisions record which one
+  owns them.
 - Message types that cross the port (`DecisionRequest`, `Decision`) are plain records serialized with the options in
   `WorkflowJson`. Renaming a property while runs are parked is a breaking change; version the type or drain first.
 

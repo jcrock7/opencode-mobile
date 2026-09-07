@@ -39,7 +39,7 @@ public sealed class AssessExecutor : Executor<WorkflowTrigger>
             .RunAsync<Assessment>(prompt, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
-        var request = new DecisionRequest(trigger.CaseId, trigger.CaseType, response.Result, DateTimeOffset.UtcNow);
+        var request = new DecisionRequest(trigger.CaseId, trigger.CaseType, response.Result, DateTimeOffset.UtcNow, trigger.Attributes);
         await context.SendMessageAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

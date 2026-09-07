@@ -9,7 +9,7 @@ namespace AgentWorkflow.Core.Tests;
 public sealed class DecisionCardTests
 {
     private static readonly PendingDecision s_pending = new(
-        "req-42", "sess-1", "cp-1", "HumanDecision",
+        "req-42", "HumanDecision", "sess-1", "cp-1", "HumanDecision",
         new DecisionRequest("PO-1001", "PurchaseOrderHold",
             new Assessment("Hold caused by bank change.", "Release the hold", "Verified in vendor master.", "Medium",
                 ["get_purchase_order: BANK_CHANGE"], "Release the payment hold on PO-1001"),

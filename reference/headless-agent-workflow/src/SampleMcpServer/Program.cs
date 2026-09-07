@@ -53,6 +53,7 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<PurchaseOrderRepository>();
+builder.Services.AddSingleton<LandRepository>();
 builder.Services
     .AddMcpServer()
     .WithHttpTransport(options =>
@@ -61,7 +62,8 @@ builder.Services
         // only calls tools and never needs server-to-client requests.
         options.SessionMode = HttpServerSessionMode.Stateless;
     })
-    .WithTools<PurchaseOrderTools>();
+    .WithTools<PurchaseOrderTools>()
+    .WithTools<LandTools>();
 
 WebApplication app = builder.Build();
 

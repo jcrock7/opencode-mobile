@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AgentWorkflow.Core.Land;
 using AgentWorkflow.Core.Models;
 using AgentWorkflow.Core.Runtime;
 
@@ -18,6 +19,12 @@ public static class DecisionCard
 
     public static string BuildRequestCard(PendingDecision pending)
     {
+        // Workflow-specific cards render the detail payload; everything else falls back to the generic card.
+        if (pending.Request.CaseType == LeaseReviewWorkflow.CaseType && pending.Request.TryGetDetail(out LeaseReview? review))
+        {
+            return LeaseReviewCard.BuildRequestCard(pending, review);
+        }
+
         DecisionRequest request = pending.Request;
         Assessment a = request.Assessment;
 
@@ -127,7 +134,7 @@ public static class DecisionCard
         return new DecisionAction(requestId, outcome, string.IsNullOrWhiteSpace(comments) ? null : comments!.Trim());
     }
 
-    private static JsonObject Execute(string title, string requestId, DecisionOutcome outcome, string style) => new()
+    internal static JsonObject Execute(string title, string requestId, DecisionOutcome outcome, string style) => new()
     {
         ["type"] = "Action.Execute",
         ["title"] = title,
@@ -137,7 +144,7 @@ public static class DecisionCard
         ["data"] = new JsonObject { ["requestId"] = requestId, ["outcome"] = outcome.ToString() },
     };
 
-    private static JsonObject TextBlock(string text, string? size = null, string? weight = null, bool isSubtle = false, string? color = null)
+    internal static JsonObject TextBlock(string text, string? size = null, string? weight = null, bool isSubtle = false, string? color = null)
     {
         var block = new JsonObject { ["type"] = "TextBlock", ["text"] = text, ["wrap"] = true };
         if (size is not null) block["size"] = size;
@@ -147,7 +154,7 @@ public static class DecisionCard
         return block;
     }
 
-    private static JsonObject FactSet(params (string Title, string Value)[] facts) => new()
+    internal static JsonObject FactSet(params (string Title, string Value)[] facts) => new()
     {
         ["type"] = "FactSet",
         ["facts"] = new JsonArray(facts.Select(f => (JsonNode)new JsonObject { ["title"] = f.Title, ["value"] = f.Value }).ToArray()),

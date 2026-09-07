@@ -11,21 +11,34 @@ public sealed class ScheduleOptions
     public int IntervalMinutes { get; set; } = 15;
 }
 
+/// <summary>A case to start, and which workflow should run it.</summary>
+public sealed class ScheduledCase
+{
+    public required string WorkflowName { get; set; }
+    public required string CaseId { get; set; }
+    public required string CaseType { get; set; }
+    public string Description { get; set; } = "";
+    public string? RequestedBy { get; set; }
+    public Dictionary<string, string>? Attributes { get; set; }
+
+    public WorkflowTrigger ToTrigger() => new(CaseId, CaseType, Description, RequestedBy ?? "scheduler", Attributes);
+}
+
 /// <summary>
-/// Where scheduled runs get their work. The sample reads static cases from configuration;
-/// a real implementation polls the system of record (ERP view, queue, database) for new cases.
+/// Where scheduled runs get their work. The sample reads static cases from configuration; a real implementation
+/// polls the system of record (the land system's "pending review" queue, an ERP view, a database) for new cases.
 /// </summary>
 public interface IWorkflowTriggerSource
 {
-    Task<IReadOnlyList<WorkflowTrigger>> GetPendingAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<ScheduledCase>> GetPendingAsync(CancellationToken cancellationToken);
 }
 
 public sealed class ConfigurationTriggerSource(IConfiguration configuration) : IWorkflowTriggerSource
 {
-    public Task<IReadOnlyList<WorkflowTrigger>> GetPendingAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyList<ScheduledCase>> GetPendingAsync(CancellationToken cancellationToken)
     {
-        var triggers = configuration.GetSection("Triggers:Schedule:Cases").Get<List<WorkflowTrigger>>() ?? [];
-        return Task.FromResult<IReadOnlyList<WorkflowTrigger>>(triggers);
+        var cases = configuration.GetSection("Triggers:Schedule:Cases").Get<List<ScheduledCase>>() ?? [];
+        return Task.FromResult<IReadOnlyList<ScheduledCase>>(cases);
     }
 }
 
@@ -37,7 +50,7 @@ public sealed class ConfigurationTriggerSource(IConfiguration configuration) : I
 public sealed class ScheduledTriggerService(
     IOptions<ScheduleOptions> options,
     IWorkflowTriggerSource source,
-    WorkflowRunner runner,
+    WorkflowRunnerRegistry runners,
     ILogger<ScheduledTriggerService> logger) : BackgroundService
 {
     private readonly HashSet<string> _started = new(StringComparer.Ordinal);
@@ -55,15 +68,21 @@ public sealed class ScheduledTriggerService(
         {
             try
             {
-                foreach (WorkflowTrigger trigger in await source.GetPendingAsync(stoppingToken))
+                foreach (ScheduledCase scheduled in await source.GetPendingAsync(stoppingToken))
                 {
-                    if (!_started.Add(trigger.CaseId))
+                    if (!_started.Add($"{scheduled.WorkflowName}:{scheduled.CaseId}"))
                     {
                         continue; // already started in this process; a real source would mark cases as taken
                     }
 
-                    WorkflowRunOutcome outcome = await runner.StartAsync(trigger, stoppingToken);
-                    logger.LogInformation("Scheduled run for case {CaseId}: {Status}", trigger.CaseId, outcome.Status);
+                    if (!runners.TryGet(scheduled.WorkflowName, out WorkflowRunner runner))
+                    {
+                        logger.LogWarning("Scheduled case {CaseId} names unknown workflow {Workflow}; skipped.", scheduled.CaseId, scheduled.WorkflowName);
+                        continue;
+                    }
+
+                    WorkflowRunOutcome outcome = await runner.StartAsync(scheduled.ToTrigger(), stoppingToken);
+                    logger.LogInformation("Scheduled {Workflow} run for case {CaseId}: {Status}", scheduled.WorkflowName, scheduled.CaseId, outcome.Status);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

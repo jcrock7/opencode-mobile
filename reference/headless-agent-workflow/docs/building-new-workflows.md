@@ -13,8 +13,12 @@ public sealed record InvoiceExceptionTrigger(string InvoiceId, string Reason);
 public sealed record InvoiceAssessment(string Summary, string RiskLevel, string ProposedAction, IReadOnlyList<string> Evidence);
 ```
 
-If the human decision shape is the same (approve/reject a proposed action), reuse `DecisionRequest` and `Decision`
-so the card and channel code work unchanged. The `Assessment` record is deliberately generic.
+Always reuse `DecisionRequest` and `Decision` as the port contract so the runner, stores, Teams channel and click
+handler work unchanged. `Assessment` is the generic decision surface (summary, recommendation, risk, evidence,
+proposed action). Put your rich, workflow-specific result in the request's `Detail` with
+`DecisionRequest.Create(caseId, caseType, assessment, detail, attributes)` and read it back with
+`request.TryGetDetail<T>(out var d)`. The lease review does exactly this with `LeaseReview`
+(`src/AgentWorkflow.Core/Land`), and its card renders the detail.
 
 ## 2. Write the executors
 
@@ -66,19 +70,24 @@ Patterns worth knowing:
 
 ## 4. Provide a factory
 
-Implement `IWorkflowFactory` (see `HumanDecisionWorkflowFactory`). Load MCP tools through `McpToolSource`, give each
-agent only the tools it needs, and always create agents with fixed `Id`/`Name`. Register it in `Program.cs`.
+Implement `IWorkflowFactory` (see `LeaseReviewWorkflowFactory`): a stable `Name`, and `CreateAsync` that loads MCP
+tools through `McpToolSource`, grants each agent only the tools it needs **by explicit name**, and creates agents
+with fixed `Id`/`Name`. Register it with `AddSingleton<IWorkflowFactory, YourFactory>()` in `Program.cs`; the
+`WorkflowRunnerRegistry` builds one `WorkflowRunner` per factory and exposes it at `/api/workflows/{Name}/run`.
+Pending decisions record the workflow name, so the Teams click resumes with the right runner automatically.
 
 ## 5. Route the humans
 
-Add a `Routes` entry in `Approvals` for the new `CaseType`. If the card needs different content, add a builder in
-`DecisionCard` and pick it by case type in `TeamsDecisionChannel.NotifyAsync`.
+Add `Routes` entries in `Approvals` for the new `CaseType`, optionally per trigger attribute (`Attribute`/`Value`).
+If the card needs different content, add a `YourCard.BuildRequestCard(pending, detail)` and dispatch to it from
+`DecisionCard.BuildRequestCard` by case type, as `LeaseReviewCard` does. Keep the same verb and `{ requestId, outcome }`
+action data so `DecisionAgent` needs no change.
 
 ## 6. Expose the trigger
 
-Add a `MapPost` in `WorkflowTriggerEndpoints` (or a queue consumer / timer) that turns the external event into your
-trigger record and calls `WorkflowRunner.StartAsync`. One `WorkflowRunner` per workflow type; register several
-with keyed services if the host runs more than one workflow.
+Nothing to add for HTTP: `POST /api/workflows/{Name}/run` already exists for every registered factory. For a
+scheduled or queue trigger, implement `IWorkflowTriggerSource` returning `ScheduledCase` items with the workflow
+name, or add a queue consumer that calls `WorkflowRunnerRegistry.Get(name).StartAsync`.
 
 ## 7. Test without Azure
 

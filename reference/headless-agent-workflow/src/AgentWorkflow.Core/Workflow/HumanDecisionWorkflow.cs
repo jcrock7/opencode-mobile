@@ -41,5 +41,8 @@ public static class HumanDecisionWorkflow
 /// </summary>
 public interface IWorkflowFactory
 {
+    /// <summary>Stable workflow name; recorded on every pending decision so the right runner resumes it.</summary>
+    string Name { get; }
+
     Task<Microsoft.Agents.AI.Workflows.Workflow> CreateAsync(CancellationToken cancellationToken = default);
 }

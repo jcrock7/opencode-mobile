@@ -38,6 +38,8 @@ public sealed class HumanDecisionWorkflowTests : IDisposable
 
     private sealed class TestWorkflowFactory(IChatClient chatClient) : IWorkflowFactory
     {
+        public string Name => HumanDecisionWorkflow.Name;
+
         public Task<Microsoft.Agents.AI.Workflows.Workflow> CreateAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(HumanDecisionWorkflow.Build(
                 WorkflowAgents.CreateAnalyst(chatClient, []),
@@ -67,6 +69,7 @@ public sealed class HumanDecisionWorkflowTests : IDisposable
             Assert.Equal("PO-1001", outcome.Pending.Request.CaseId);
             Assert.Equal("Release the payment hold on PO-1001", outcome.Pending.Request.Assessment.ProposedAction);
             Assert.Equal(HumanDecisionWorkflow.DecisionPortId, outcome.Pending.PortId);
+            Assert.Equal(HumanDecisionWorkflow.Name, outcome.Pending.WorkflowName);
             Assert.Equal("conversation-1", outcome.Pending.ChannelReference);
 
             Assert.Single(channel.Notified);
@@ -150,7 +153,7 @@ public sealed class HumanDecisionWorkflowTests : IDisposable
     public async Task Claiming_a_decision_twice_fails_the_second_time()
     {
         var store = new InMemoryPendingDecisionStore();
-        var pending = new PendingDecision("r1", "s1", "c1", HumanDecisionWorkflow.DecisionPortId,
+        var pending = new PendingDecision("r1", HumanDecisionWorkflow.Name, "s1", "c1", HumanDecisionWorkflow.DecisionPortId,
             new DecisionRequest("PO-1", "PurchaseOrderHold", new Assessment("s", "r", "why", "Low", [], "act"), DateTimeOffset.UtcNow),
             DateTimeOffset.UtcNow, null);
         await store.SaveAsync(pending);

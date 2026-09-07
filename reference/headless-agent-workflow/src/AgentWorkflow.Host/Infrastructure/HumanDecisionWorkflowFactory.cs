@@ -6,27 +6,30 @@ using Microsoft.Extensions.AI;
 namespace AgentWorkflow.Host.Infrastructure;
 
 /// <summary>
-/// Builds the reference workflow with agents that carry the MCP tools. Called for every start and resume,
-/// so each run gets an identical graph (required for checkpoint rehydration).
+/// Builds the purchasing reference workflow with agents that carry the MCP tools. Called for every start and
+/// resume, so each run gets an identical graph (required for checkpoint rehydration).
+/// Tools are granted by explicit name: the analyst sees only purchasing read tools, the operator only the release tool.
 /// </summary>
 public sealed class HumanDecisionWorkflowFactory(IChatClient chatClient, McpToolSource tools) : IWorkflowFactory
 {
+    private static readonly HashSet<string> s_analystTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "get_purchase_order", "list_held_purchase_orders", "get_vendor_profile",
+    };
+
+    private static readonly HashSet<string> s_operatorTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "release_purchase_order_hold",
+    };
+
+    public string Name => HumanDecisionWorkflow.Name;
+
     public async Task<Microsoft.Agents.AI.Workflows.Workflow> CreateAsync(CancellationToken cancellationToken = default)
     {
         IReadOnlyList<AITool> mcpTools = await tools.GetToolsAsync(cancellationToken);
 
-        // Least privilege per agent: the analyst only sees read tools, the operator only the write tool it needs.
-        var readTools = mcpTools.Where(t => !IsWriteTool(t.Name)).ToList();
-        var writeTools = mcpTools.Where(t => IsWriteTool(t.Name)).ToList();
-
         return HumanDecisionWorkflow.Build(
-            WorkflowAgents.CreateAnalyst(chatClient, readTools),
-            WorkflowAgents.CreateOperator(chatClient, writeTools));
+            WorkflowAgents.CreateAnalyst(chatClient, mcpTools.Where(t => s_analystTools.Contains(t.Name))),
+            WorkflowAgents.CreateOperator(chatClient, mcpTools.Where(t => s_operatorTools.Contains(t.Name))));
     }
-
-    private static bool IsWriteTool(string name) =>
-        name.StartsWith("release_", StringComparison.OrdinalIgnoreCase)
-        || name.StartsWith("update_", StringComparison.OrdinalIgnoreCase)
-        || name.StartsWith("create_", StringComparison.OrdinalIgnoreCase)
-        || name.StartsWith("delete_", StringComparison.OrdinalIgnoreCase);
 }

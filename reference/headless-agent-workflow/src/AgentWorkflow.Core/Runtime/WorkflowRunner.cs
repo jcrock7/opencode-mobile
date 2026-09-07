@@ -55,6 +55,9 @@ public sealed class WorkflowRunner
         _logger = logger ?? NullLogger<WorkflowRunner>.Instance;
     }
 
+    /// <summary>Name of the workflow this runner starts and resumes.</summary>
+    public string WorkflowName => _workflowFactory.Name;
+
     public async Task<WorkflowRunOutcome> StartAsync(WorkflowTrigger trigger, CancellationToken cancellationToken = default)
     {
         Microsoft.Agents.AI.Workflows.Workflow workflow = await _workflowFactory.CreateAsync(cancellationToken).ConfigureAwait(false);
@@ -63,7 +66,7 @@ public sealed class WorkflowRunner
             .RunStreamingAsync(workflow, trigger, _checkpointManager, sessionId: null, cancellationToken)
             .ConfigureAwait(false);
 
-        _logger.LogInformation("Workflow {Workflow} started for case {CaseId} (session {SessionId}).", HumanDecisionWorkflow.Name, trigger.CaseId, run.SessionId);
+        _logger.LogInformation("Workflow {Workflow} started for case {CaseId} (session {SessionId}).", WorkflowName, trigger.CaseId, run.SessionId);
         return await RunToHaltAsync(run, previous: null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -177,6 +180,7 @@ public sealed class WorkflowRunner
 
         var pending = new PendingDecision(
             request.RequestId,
+            WorkflowName,
             run.SessionId,
             checkpoint.CheckpointId,
             request.PortInfo.PortId,

@@ -77,7 +77,9 @@ builder.Services.AddSingleton<McpToolSource>();
 // ---------------------------------------------------------------------------------------------
 // 5. Agent Framework workflow runtime: graph factory, checkpoints, pending decisions, Teams channel
 // ---------------------------------------------------------------------------------------------
-builder.Services.AddSingleton<IWorkflowFactory, HumanDecisionWorkflowFactory>();
+// One factory per workflow hosted here. Each becomes a WorkflowRunner addressed by its Name.
+builder.Services.AddSingleton<IWorkflowFactory, HumanDecisionWorkflowFactory>();   // purchasing sample
+builder.Services.AddSingleton<IWorkflowFactory, LeaseReviewWorkflowFactory>();     // Land team: pre-execution lease review
 
 builder.Services.AddSingleton<CheckpointManager>(_ =>
 {
@@ -92,7 +94,13 @@ builder.Services.AddSingleton<IPendingDecisionStore>(_ =>
 
 builder.Services.Configure<ApprovalRoutingOptions>(config.GetSection("Approvals"));
 builder.Services.AddSingleton<IDecisionChannel, TeamsDecisionChannel>();
-builder.Services.AddSingleton<WorkflowRunner>();
+builder.Services.AddSingleton<WorkflowRunnerRegistry>(sp => new WorkflowRunnerRegistry(
+    sp.GetServices<IWorkflowFactory>().Select(factory => new WorkflowRunner(
+        factory,
+        sp.GetRequiredService<CheckpointManager>(),
+        sp.GetRequiredService<IPendingDecisionStore>(),
+        sp.GetRequiredService<IDecisionChannel>(),
+        sp.GetRequiredService<ILogger<WorkflowRunner>>()))));
 
 // ---------------------------------------------------------------------------------------------
 // 6. Headless triggers

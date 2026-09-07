@@ -32,9 +32,17 @@ source. Alternatives and when to pick them instead:
   Scheduler runs it with automatic checkpointing and generated HTTP endpoints for the human step. Move to it when
   you need many concurrent long-running runs across instances. The executors in this repo carry over unchanged.
 
-## What the sample does
+## What the samples do
 
-Scenario (swap freely): a purchase order lands on payment hold in the ERP.
+Two workflows are registered in the host and share every piece of plumbing:
+
+- **LeaseReview** (Land team, upstream oil and gas): a draft lease is reviewed before signature. The agent captures
+  key terms, compares provisions with the company lease form, and identifies curative title work; a landman signs
+  off in Teams; the review is recorded and curative tasks are opened. See
+  [docs/workflows/lease-review.md](docs/workflows/lease-review.md).
+- **HumanDecision** (purchasing, the minimal template): a purchase order lands on payment hold in the ERP.
+
+The minimal template, step by step:
 
 ```
  trigger (HTTP / timer / queue)
@@ -50,7 +58,8 @@ host instance; the run is rehydrated from its checkpoint and continues.
 ## Layout
 
 ```
-src/AgentWorkflow.Core      Workflow graph, executors, agents, MCP tool loading, checkpoint-backed runner
+src/AgentWorkflow.Core      Workflow graphs, executors, agents, MCP tool loading, checkpoint-backed runner
+src/AgentWorkflow.Core/Land Lease review workflow (models, agents, executors, graph)
 src/AgentWorkflow.Host      ASP.NET Core host: Teams endpoint (Agents SDK) + workflow runtime + triggers
 src/SampleMcpServer         Custom MCP server secured with Entra ID (JWT validation, PRM, app roles)
 tests/                      xunit: pause/resume cycle, card contract, bearer token handler
@@ -60,6 +69,7 @@ docs/azure-admin-request.md Hand this to your Azure/Entra admin: exact steps, ro
 infra/provision.sh          Script an admin can review and run for the Azure/Entra steps; writes handoff.json
 docs/teams-and-human-decisions.md   Proactive messaging, card design, routing, audit
 docs/building-new-workflows.md      Step-by-step to create the next workflow from this one
+docs/workflows/lease-review.md      The Land team lease review: what it captures, tools, routing, adaptation
 ```
 
 ## Build and test
@@ -88,16 +98,17 @@ The tests use a scripted model client and a file-based checkpoint store, so they
 5. Kick off a run (no auth required in Development):
 
    ```bash
-   curl -X POST http://localhost:5000/api/workflows/human-decision/run \
+   curl -X POST http://localhost:5000/api/workflows/LeaseReview/run \
      -H 'content-type: application/json' \
-     -d '{"caseId":"PO-1001","caseType":"PurchaseOrderHold","description":"PO-1001 was placed on payment hold by the ERP.","requestedBy":"erp-events"}'
+     -d '{"caseId":"L-2026-0142","caseType":"LeaseReview","description":"Draft lease from Keystone Land Services for pre-execution review.","requestedBy":"land-system","attributes":{"state":"PA","county":"Washington","tractId":"T-3391","documentId":"DOC-88213"}}'
    ```
 
-   The approver configured in `Approvals` receives a card in Teams. Approve it; the operator agent releases the
-   hold through the MCP server and a result card follows.
+   The landman routed in `Approvals` receives the lease sign-off card in Teams. Approve it; the operator agent
+   records the review, opens curative tasks through the MCP server, and a result card follows. The purchasing
+   template runs the same way at `/api/workflows/HumanDecision/run` with the PO-1001 case.
 
-`GET /api/workflows/human-decision/pending` lists runs waiting on a human, and
-`POST /api/workflows/human-decision/{requestId}/decide` records a decision without Teams (operators, tests).
+`GET /api/workflows` lists the registered workflows, `GET /api/workflows/pending` lists runs waiting on a human, and
+`POST /api/workflows/decisions/{requestId}/decide` records a decision without Teams (operators, tests).
 
 ## What has and has not been verified
 

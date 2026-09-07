@@ -8,6 +8,7 @@ namespace AgentWorkflow.Core.Runtime;
 /// </summary>
 public sealed record PendingDecision(
     string RequestId,
+    string WorkflowName,
     string SessionId,
     string CheckpointId,
     string PortId,

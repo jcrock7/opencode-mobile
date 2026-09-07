@@ -17,19 +17,19 @@ namespace AgentWorkflow.Host;
 /// </summary>
 public class DecisionAgent : AgentApplication
 {
-    private readonly WorkflowRunner _runner;
+    private readonly WorkflowRunnerRegistry _runners;
     private readonly IPendingDecisionStore _pending;
     private readonly IBackgroundTaskQueue _backgroundQueue;
     private readonly ILogger<DecisionAgent> _logger;
 
     public DecisionAgent(
         AgentApplicationOptions options,
-        WorkflowRunner runner,
+        WorkflowRunnerRegistry runners,
         IPendingDecisionStore pending,
         IBackgroundTaskQueue backgroundQueue,
         ILogger<DecisionAgent> logger) : base(options)
     {
-        _runner = runner;
+        _runners = runners;
         _pending = pending;
         _backgroundQueue = backgroundQueue;
         _logger = logger;
@@ -63,7 +63,7 @@ public class DecisionAgent : AgentApplication
         }
 
         string text = string.Join("\n\n", items.Select(p =>
-            $"- **{p.Request.CaseType} {p.Request.CaseId}** (risk {p.Request.Assessment.RiskLevel}, since {p.CreatedAt:yyyy-MM-dd HH:mm} UTC){(p.ClaimedBy is null ? "" : $" - being applied by {p.ClaimedBy}")}"));
+            $"- **{p.WorkflowName}: {p.Request.CaseType} {p.Request.CaseId}** (risk {p.Request.Assessment.RiskLevel}, since {p.CreatedAt:yyyy-MM-dd HH:mm} UTC){(p.ClaimedBy is null ? "" : $" - being applied by {p.ClaimedBy}")}"));
         await turnContext.SendActivityAsync(MessageFactory.Text(text), cancellationToken);
     }
 
@@ -107,11 +107,12 @@ public class DecisionAgent : AgentApplication
         _logger.LogInformation("Decision {Outcome} on case {CaseId} by {DecidedBy}; resuming workflow in background.",
             decision.Outcome, pending.Request.CaseId, decidedBy);
 
+        WorkflowRunner runner = _runners.Get(pending.WorkflowName);
         _backgroundQueue.QueueBackgroundWorkItem(async ct =>
         {
             try
             {
-                await _runner.ResumeAsync(action.RequestId, decision, ct);
+                await runner.ResumeAsync(action.RequestId, decision, ct);
             }
             catch (Exception ex)
             {
