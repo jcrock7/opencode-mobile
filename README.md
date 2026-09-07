@@ -386,6 +386,14 @@ brew install ngrok
 ngrok config add-authtoken YOUR_TOKEN
 ```
 
+## Running local models alongside OpenCode
+
+`scripts/local-models/` contains launchers for serving Qwen coding models
+locally with `llama-server` on a 12 GB GPU laptop (Qwen3.6-35B-A3B for speed
+and long context, Qwen3.8-27B for quality), plus an OpenCode provider example
+and the RAM/VRAM budget for running them next to Claude Code sessions. See
+[scripts/local-models/README.md](scripts/local-models/README.md).
+
 ## Troubleshooting
 
 ### "No tunnel URL found"
