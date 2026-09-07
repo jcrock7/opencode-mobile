@@ -1,5 +1,8 @@
 # Authentication and identities
 
+> Need someone else to do the provisioning? Forward [azure-admin-request.md](azure-admin-request.md); it lists the
+> steps, the directory roles the administrator needs, and the values to hand back. `infra/provision.sh` scripts them.
+
 Five parties talk to each other. Each has its own identity and its own trust relationship. Nothing uses an API key.
 
 ```

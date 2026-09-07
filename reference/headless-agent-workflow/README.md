@@ -56,6 +56,8 @@ src/SampleMcpServer         Custom MCP server secured with Entra ID (JWT validat
 tests/                      xunit: pause/resume cycle, card contract, bearer token handler
 docs/architecture.md        How the pieces fit, durability model, scaling, upgrade paths
 docs/authentication.md      Every identity to provision and every setting it feeds
+docs/azure-admin-request.md Hand this to your Azure/Entra admin: exact steps, roles needed, values to return
+infra/provision.sh          Script an admin can review and run for the Azure/Entra steps; writes handoff.json
 docs/teams-and-human-decisions.md   Proactive messaging, card design, routing, audit
 docs/building-new-workflows.md      Step-by-step to create the next workflow from this one
 ```
@@ -74,8 +76,9 @@ The tests use a scripted model client and a file-based checkpoint store, so they
 
 ## Run locally
 
-1. Provision identities per [docs/authentication.md](docs/authentication.md) (agent app registration + Azure Bot,
-   MCP server app registration, Azure OpenAI role assignment). Sign in with `az login`.
+1. Have an administrator provision the identities and resources using [docs/azure-admin-request.md](docs/azure-admin-request.md)
+   (or run `infra/provision.sh`). You get back a `handoff.json`; [docs/authentication.md](docs/authentication.md)
+   explains what each value does. Sign in with `az login` using an account that was granted access in step E.
 2. Fill the `{{placeholders}}` in `src/AgentWorkflow.Host/appsettings.Development.json` and
    `src/SampleMcpServer/appsettings.json`. Put the bot client secret in user secrets:
    `dotnet user-secrets set "Connections:ServiceConnection:Settings:ClientSecret" "<secret>"` (in the Host folder).
