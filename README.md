@@ -495,3 +495,9 @@ See [AGENTS.md](./AGENTS.md) for development guidelines and project structure.
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
+
+## Reference implementations
+
+- [`reference/headless-agent-workflow/`](reference/headless-agent-workflow/README.md): a .NET reference for headless
+  agentic workflows built on Microsoft Agent Framework with custom MCP servers, Entra ID authentication, and human
+  decisions delivered through Microsoft Teams (Microsoft 365 Agents SDK). Independent of the plugin; see its README.

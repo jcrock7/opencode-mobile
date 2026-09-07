@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentWorkflow.Core/AgentWorkflow.Core.csproj" />
+    <Project Path="src/AgentWorkflow.Host/AgentWorkflow.Host.csproj" />
+    <Project Path="src/SampleMcpServer/SampleMcpServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentWorkflow.Core.Tests/AgentWorkflow.Core.Tests.csproj" />
+  </Folder>
+</Solution>

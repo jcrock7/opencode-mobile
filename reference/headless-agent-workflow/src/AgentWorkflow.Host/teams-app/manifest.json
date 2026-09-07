@@ -1,0 +1,34 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.0",
+  "id": "{{AgentAppId}}",
+  "developer": {
+    "name": "Contoso IT",
+    "websiteUrl": "https://contoso.com",
+    "privacyUrl": "https://contoso.com/privacy",
+    "termsOfUseUrl": "https://contoso.com/terms"
+  },
+  "name": { "short": "Workflow Decisions", "full": "Automated Workflow Decisions" },
+  "description": {
+    "short": "Approve or reject actions proposed by automated workflows.",
+    "full": "Delivers decision requests from headless agentic workflows as Adaptive Cards and records the human decision."
+  },
+  "icons": { "outline": "outline.png", "color": "color.png" },
+  "accentColor": "#0F6CBD",
+  "bots": [
+    {
+      "botId": "{{AgentAppId}}",
+      "scopes": [ "personal", "team", "groupChat" ],
+      "isNotificationOnly": false,
+      "supportsFiles": false,
+      "supportsCalling": false,
+      "supportsVideo": false,
+      "commandLists": [
+        { "scopes": [ "personal" ], "commands": [ { "title": "pending", "description": "List decisions waiting on you" } ] }
+      ]
+    }
+  ],
+  "permissions": [ "identity", "messageTeamMembers" ],
+  "validDomains": [ "{{HostDomain}}" ]
+}
